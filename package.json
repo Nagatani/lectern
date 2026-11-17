@@ -1,0 +1,24 @@
+{
+  "name": "lectern",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Lectern — Rust & Tauri Lecture Material Editor and HTML/PDF Converter",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "katex": "^0.16.11",
+    "mermaid": "^11.4.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
+    "@types/katex": "^0.16.7",
+    "typescript": "^5.6.2",
+    "vite": "^6.0.0"
+  }
+}

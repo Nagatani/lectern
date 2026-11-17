@@ -1,0 +1,36 @@
+# Node / Frontend dependencies & build outputs
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Rust / Cargo / Tauri build outputs
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/WixTools/
+**/*.rs.bk
+
+# Generated lecture exports (HTML / PDF outputs during testing)
+/sample-lectures/exports/
+**/exports/*.html
+**/exports/*.pdf
+
+# OS & Editor specific files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.*
+!.env.example

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- MANDATORY: Declare support for both light and dark themes -->
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      try {
+        document.querySelector('meta[name="color-scheme"]').content =
+          localStorage.getItem("color-scheme") ?? "light dark";
+      } catch (_) {}
+    </script>
+    <title>Lectern — 講義資料作成・変換ツール</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <!-- Top Header / Toolbar -->
+      <header class="toolbar">
+        <div class="toolbar-left">
+          <div class="brand">
+            <span class="brand-badge">Rust + Tauri</span>
+            <h1 class="brand-title">Lectern</h1>
+          </div>
+          <div class="workspace-controls">
+            <button type="button" id="btn-open-folder" class="btn btn-secondary" title="講義フォルダを開く">
+              📂 フォルダ変更
+            </button>
+            <button type="button" id="btn-new-file" class="btn btn-secondary" title="新規Markdownファイルを作成">
+              ＋ 新規作成
+            </button>
+            <button type="button" id="btn-save-file" class="btn btn-secondary" title="保存 (Cmd+S / Ctrl+S)">
+              💾 保存
+            </button>
+          </div>
+        </div>
+
+        <div class="toolbar-center">
+          <div class="mode-segmented" role="group" aria-label="表示・出力モード切替">
+            <button type="button" id="mode-document" class="segment-btn active" data-mode="document">
+              📄 ドキュメント (A4縦)
+            </button>
+            <button type="button" id="mode-slide" class="segment-btn" data-mode="slide">
+              🖥️ スライド (16:9)
+            </button>
+          </div>
+
+          <div id="slide-nav" class="slide-nav" hidden>
+            <button type="button" id="btn-prev-slide" class="btn btn-icon" aria-label="前のスライド" title="前のスライド">◀</button>
+            <span id="slide-counter" class="slide-counter">1 / 1</span>
+            <button type="button" id="btn-next-slide" class="btn btn-icon" aria-label="次のスライド" title="次のスライド">▶</button>
+            <button type="button" id="btn-slide-view-mode" class="btn btn-secondary btn-sm" title="単一スライド表示と一覧表示を切り替え">
+              一覧表示
+            </button>
+          </div>
+        </div>
+
+        <div class="toolbar-right">
+          <button type="button" id="btn-export-html" class="btn btn-primary" title="スタンドアロンHTMLとして出力">
+            🌐 HTML出力
+          </button>
+          <button type="button" id="btn-export-pdf" class="btn btn-accent" title="高品質PDFとして出力">
+            📑 PDF出力
+          </button>
+          <button type="button" id="btn-theme-toggle" class="btn btn-icon" aria-label="テーマ切替" title="ライト/ダークモード切替">
+            🌓
+          </button>
+          <button type="button" id="btn-help" class="btn btn-icon" aria-label="記法ヘルプ" title="講義Markdown記法ガイド">
+            ❓
+          </button>
+        </div>
+      </header>
+
+      <!-- Quick Insert Bar for Lecture Authoring -->
+      <div class="quick-bar" role="toolbar" aria-label="マークダウン挿入ツールバー">
+        <span class="quick-bar-label">クイック挿入:</span>
+        <button type="button" class="chip-btn" data-insert="slide-break" title="スライド区切り (---) を挿入">＋ スライド区切り</button>
+        <button type="button" class="chip-btn" data-insert="math-block" title="ディスプレイ数式 ($$ ... $$) を挿入">∑ 数式ブロック</button>
+        <button type="button" class="chip-btn" data-insert="math-inline" title="インライン数式 ($ ... $) を挿入">$ インライン数式</button>
+        <button type="button" class="chip-btn" data-insert="code-rust" title="シンタックスハイライト付きコードブロックを挿入">🦀 コードブロック</button>
+        <button type="button" class="chip-btn" data-insert="mermaid" title="Mermaid フローチャート図を挿入">📊 Mermaid図表</button>
+        <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
+        <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
+        <div class="quick-bar-spacer"></div>
+        <span id="current-file-indicator" class="file-indicator">未選択</span>
+        <span id="save-status-badge" class="status-badge saved">Saved</span>
+      </div>
+
+      <!-- Main 3-Pane Workspace -->
+      <main class="workspace-grid">
+        <!-- Left Pane: File Browser -->
+        <aside class="sidebar" aria-label="ファイルブラウザ">
+          <div class="sidebar-header">
+            <span class="sidebar-title">📁 ファイル一覧</span>
+            <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-sm" aria-label="ツリー更新" title="再読み込み">↻</button>
+          </div>
+          <div id="workspace-path-label" class="workspace-path" title="現在のワークスペース"></div>
+          <ul id="file-tree" class="file-tree" role="tree" aria-label="講義資料ファイルツリー"></ul>
+        </aside>
+
+        <!-- Center Pane: Markdown Editor -->
+        <section class="editor-pane" aria-label="マークダウンエディタ">
+          <div class="pane-header">
+            <span>✏️ Markdown エディタ</span>
+            <span id="editor-stats" class="pane-meta">0 行 · 0 文字</span>
+          </div>
+          <div class="editor-container">
+            <div id="line-numbers" class="line-numbers" aria-hidden="true">1</div>
+            <textarea
+              id="markdown-editor"
+              class="markdown-editor"
+              spellcheck="false"
+              placeholder="ここに講義資料のMarkdownを入力してください..."
+              aria-label="Markdownソースコード"
+            ></textarea>
+          </div>
+        </section>
+
+        <!-- Right Pane: Live Preview -->
+        <section class="preview-pane" aria-label="リアルタイムプレビュー">
+          <div class="pane-header">
+            <span id="preview-title">👁️ プレビュー (ドキュメント形式)</span>
+            <span id="compile-time" class="pane-meta">Rust Engine Ready</span>
+          </div>
+          <div id="preview-viewport" class="preview-viewport mode-document">
+            <article id="preview-content" class="lecture-render-root"></article>
+          </div>
+        </section>
+      </main>
+
+      <!-- Footer Status Bar -->
+      <footer class="statusbar">
+        <div id="status-message" class="status-message">準備完了</div>
+        <div class="status-right">
+          <span>Engine: Rust (pulldown-cmark + syntect)</span>
+          <span>Math: KaTeX</span>
+          <span>Diagrams: Mermaid</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Modal Dialog: Open Workspace Folder or Create File -->
+    <dialog id="modal-prompt" closedby="any" aria-labelledby="modal-prompt-title">
+      <form method="dialog" id="modal-prompt-form" class="dialog-form">
+        <h2 id="modal-prompt-title" class="dialog-title">入力</h2>
+        <p id="modal-prompt-desc" class="dialog-desc"></p>
+        <input type="text" id="modal-prompt-input" class="dialog-input" autofocus />
+        <div class="dialog-actions">
+          <button type="submit" value="cancel" class="btn btn-secondary">キャンセル</button>
+          <button type="submit" value="ok" class="btn btn-primary">決定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Modal Dialog: Export Result / Notification -->
+    <dialog id="modal-export" closedby="any" aria-labelledby="modal-export-title">
+      <form method="dialog" class="dialog-form">
+        <h2 id="modal-export-title" class="dialog-title">出力完了</h2>
+        <p id="modal-export-message" class="dialog-desc"></p>
+        <div class="dialog-field">
+          <label for="modal-export-path">出力先ファイルパス:</label>
+          <input type="text" id="modal-export-path" class="dialog-input" readonly />
+        </div>
+        <div class="dialog-actions">
+          <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Modal Dialog: Lecture Markdown Syntax Guide -->
+    <dialog id="modal-help" closedby="any" aria-labelledby="modal-help-title">
+      <form method="dialog" class="dialog-form dialog-wide">
+        <h2 id="modal-help-title" class="dialog-title">📖 Lectern 講義資料記法ガイド</h2>
+        <div class="help-grid">
+          <div class="help-card">
+            <h3>1. フロントマター (先頭メタデータ)</h3>
+            <pre><code>---
+title: アルゴリズムとデータ構造 第1回
+author: 情報工学専攻 講義資料
+date: 2026-11-17
+---</code></pre>
+          </div>
+          <div class="help-card">
+            <h3>2. スライド区切り</h3>
+            <p>水平線 <code>---</code> だけで独立した行を書くと、スライドモードでは新しいスライドに分割されます。</p>
+            <pre><code># スライド1のタイトル
+内容...
+
+---
+
+# スライド2のタイトル</code></pre>
+          </div>
+          <div class="help-card">
+            <h3>3. 数式 (KaTeX)</h3>
+            <p>インライン数式は <code>$E = mc^2$</code>、ブロック数式は <code>$$ ... $$</code> で囲みます。</p>
+            <pre><code>$$
+\mathcal{L}(\theta) = -\frac{1}{N}\sum_{i=1}^{N} y_i \log \hat{y}_i
+$$</code></pre>
+          </div>
+          <div class="help-card">
+            <h3>4. 図表 (Mermaid) &amp; コードハイライト</h3>
+            <p><code>```mermaid</code> でフローチャートやシーケンス図を描画。<code>```rust</code> や <code>```python</code> 等はRust側の <code>syntect</code> で高速ハイライトされます。</p>
+          </div>
+          <div class="help-card">
+            <h3>5. コールアウト枠 (NOTE / TIP / IMPORTANT / WARNING)</h3>
+            <pre><code>&gt; [!NOTE]
+&gt; 定義や定理の補足説明を記載します。
+
+&gt; [!IMPORTANT]
+&gt; 演習問題や試験の重要ポイントです。</code></pre>
+          </div>
+          <div class="help-card">
+            <h3>6. CLI (コマンドライン) からの一括変換</h3>
+            <p>GUIだけでなくターミナルからも直接HTML/PDF変換が可能です：</p>
+            <pre><code>cargo run -- --cli sample.md --mode slide --output slide.pdf</code></pre>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
