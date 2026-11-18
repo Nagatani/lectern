@@ -61,6 +61,14 @@ fn build_doc_header_html(meta: &FrontMatter) -> String {
 
 /// マークダウン文字列を解析し、指定されたモード ("document" | "slide") に応じたHTMLを生成する
 pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
+    compile_lecture_markdown_with_theme(markdown, mode, None)
+}
+
+pub fn compile_lecture_markdown_with_theme(
+    markdown: &str,
+    mode: &str,
+    active_theme: Option<&str>,
+) -> CompileResult {
     let start = Instant::now();
     let (meta, body_md) = parse_frontmatter(markdown);
     let preprocessed = preprocess_callouts(&body_md);
@@ -70,9 +78,13 @@ pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
 
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
+    let effective_theme = active_theme
+        .filter(|s| !s.trim().is_empty())
+        .or(meta.theme.as_deref())
+        .unwrap_or("handout");
     let is_light_code_theme = matches!(
-        meta.theme.as_deref(),
-        None | Some("handout") | Some("academic")
+        effective_theme,
+        "handout" | "academic" | "sunset-warm"
     );
     let theme = if is_light_code_theme {
         &ts.themes["InspiredGitHub"]
@@ -337,7 +349,7 @@ pub fn build_standalone_html(
     theme_id: Option<&str>,
     theme_css: Option<&str>,
 ) -> String {
-    let compiled = compile_lecture_markdown(markdown, mode);
+    let compiled = compile_lecture_markdown_with_theme(markdown, mode, theme_id);
     let body_content = rendered_body_html
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(&compiled.html);
@@ -542,13 +554,33 @@ pub fn build_standalone_html(
     .math-display {{ margin: 14px 0; text-align: center; overflow-x: auto; }}
     .mermaid-container {{
       margin: 16px 0;
-      display: flex;
-      justify-content: center;
-      padding: 12px;
+      display: block;
+      text-align: center;
+      padding: 16px;
       background: #ffffff;
+      color: #1e293b;
       border: 1px solid #e2e8f0;
       border-radius: 8px;
       break-inside: avoid;
+      font-size: 15px;
+      line-height: 1.3;
+      letter-spacing: normal;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    }}
+    .mermaid-container svg {{
+      display: inline-block;
+      max-width: 100%;
+      height: auto;
+    }}
+    .mermaid-container p,
+    .mermaid-container span,
+    .mermaid-container div {{
+      margin: 0 !important;
+      padding: 0 !important;
+      line-height: 1.25 !important;
+      letter-spacing: normal !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif !important;
+      color: #1e293b !important;
     }}
     .slide-footer {{
       margin-top: auto;

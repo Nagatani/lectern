@@ -3,7 +3,10 @@ pub mod fs_ops;
 pub mod pdf;
 pub mod themes;
 
-use converter::{build_standalone_html, compile_lecture_markdown, CompileResult};
+use converter::{
+    build_standalone_html, compile_lecture_markdown, compile_lecture_markdown_with_theme,
+    CompileResult,
+};
 use fs_ops::{
     create_new_markdown, list_markdown_workspace, read_file_utf8, remove_markdown_file,
     resolve_default_workspace, write_file_utf8, FileEntry,
@@ -52,8 +55,8 @@ fn delete_markdown_file(file_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn compile_markdown(markdown: String, mode: String) -> CompileResult {
-    compile_lecture_markdown(&markdown, &mode)
+fn compile_markdown(markdown: String, mode: String, theme_id: Option<String>) -> CompileResult {
+    compile_lecture_markdown_with_theme(&markdown, &mode, theme_id.as_deref())
 }
 
 #[tauri::command]

@@ -357,11 +357,50 @@ async function handleThemeEditorModalClose(): Promise<void> {
 
 mermaid.initialize({
   startOnLoad: false,
-  theme: "default",
+  theme: "base",
   securityLevel: "loose",
+  flowchart: {
+    htmlLabels: true,
+    useMaxWidth: true,
+    padding: 14,
+  },
+  themeVariables: {
+    background: "#ffffff",
+    primaryColor: "#eff6ff",
+    primaryTextColor: "#1e293b",
+    primaryBorderColor: "#3b82f6",
+    lineColor: "#334155",
+    secondaryColor: "#f0fdf4",
+    secondaryTextColor: "#1e293b",
+    secondaryBorderColor: "#10b981",
+    tertiaryColor: "#faf5ff",
+    tertiaryTextColor: "#1e293b",
+    tertiaryBorderColor: "#8b5cf6",
+    nodeTextColor: "#1e293b",
+    textColor: "#1e293b",
+    mainBkg: "#eff6ff",
+    nodeBorder: "#3b82f6",
+    clusterBkg: "#f8fafc",
+    clusterBorder: "#94a3b8",
+    edgeLabelBackground: "#ffffff",
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif',
+    fontSize: "14px",
+  },
 });
 
 let mermaidCounter = 0;
+
+function getOrCreateMermaidSandbox(): HTMLDivElement {
+  let sb = document.getElementById("mermaid-render-sandbox") as HTMLDivElement | null;
+  if (!sb) {
+    sb = document.createElement("div");
+    sb.id = "mermaid-render-sandbox";
+    sb.style.cssText =
+      "position:fixed;top:-9999px;left:-9999px;width:960px;visibility:hidden;pointer-events:none;background:#ffffff;color:#1e293b;font-size:14px;line-height:1.25;letter-spacing:normal;font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP',sans-serif;";
+    document.body.appendChild(sb);
+  }
+  return sb;
+}
 
 async function renderMathAndDiagrams(container: HTMLElement): Promise<void> {
   // 1. Render Inline Math
@@ -386,20 +425,23 @@ async function renderMathAndDiagrams(container: HTMLElement): Promise<void> {
     }
   });
 
-  // 3. Render Mermaid Diagrams
+  // 3. Render Mermaid Diagrams in an isolated sandbox container so parent 14pt/serif rules don't distort BBox
   const mermaidBlocks = container.querySelectorAll<HTMLElement>(".mermaid-container");
-  for (const block of mermaidBlocks) {
-    const code = block.getAttribute("data-mermaid");
-    if (!code) continue;
-    try {
-      mermaidCounter += 1;
-      const id = `mermaid-svg-${Date.now()}-${mermaidCounter}`;
-      const { svg } = await mermaid.render(id, code);
-      block.innerHTML = svg;
-    } catch (err) {
-      block.innerHTML = `<pre style="color:#ef4444;font-size:12px;">Mermaid Syntax Error:\n${escapeHtml(
-        String(err)
-      )}</pre>`;
+  if (mermaidBlocks.length > 0) {
+    const sandbox = getOrCreateMermaidSandbox();
+    for (const block of mermaidBlocks) {
+      const code = block.getAttribute("data-mermaid");
+      if (!code) continue;
+      try {
+        mermaidCounter += 1;
+        const id = `mermaid-svg-${Date.now()}-${mermaidCounter}`;
+        const { svg } = await mermaid.render(id, code, sandbox);
+        block.innerHTML = svg;
+      } catch (err) {
+        block.innerHTML = `<pre style="color:#ef4444;font-size:12px;">Mermaid Syntax Error:\n${escapeHtml(
+          String(err)
+        )}</pre>`;
+      }
     }
   }
 }
@@ -454,12 +496,13 @@ function scheduleCompile(): void {
   }, 120);
 }
 
-async function compileCurrentMarkdown(): Promise<void> {
+async function compileCurrentMarkdown(syncThemeFromFrontmatter = true): Promise<void> {
   const markdown = elEditor.value;
   try {
     const res = await invoke<CompileResult>("compile_markdown", {
       markdown,
       mode: state.mode,
+      themeId: syncThemeFromFrontmatter ? null : state.currentThemeId,
     });
     state.lastCompileResult = res;
     state.totalSlides = Math.max(1, res.slide_count);
@@ -468,7 +511,7 @@ async function compileCurrentMarkdown(): Promise<void> {
     }
 
     // フロントマターに `theme: xxx` が記述されていれば自動連動
-    if (res.theme) {
+    if (syncThemeFromFrontmatter && res.theme) {
       const cleanFrontTheme = res.theme.trim().replace(/\.css$/i, "");
       const matched = state.themes.find(
         (t) => t.id.toLowerCase() === cleanFrontTheme.toLowerCase()
@@ -848,6 +891,7 @@ function bindEvents(): void {
     applyLectureThemeToPreview(selectedId);
     // フロントマターに既に `theme:` がある場合は自動で書き換え同期する
     updateMarkdownFrontmatterTheme(selectedId, false);
+    void compileCurrentMarkdown(false);
     setStatus(`資料テーマを「${selectedId}」に切り替えました`);
   });
 
