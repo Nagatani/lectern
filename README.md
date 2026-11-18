@@ -74,8 +74,21 @@ npm run tauri build
 
 ### 2. Windows で `.exe` / `.msi` を作成する
 
-#### 方法 A: GitHub Actions を使って自動生成する（Windows 実機不要）
-同梱の `.github/workflows/release-build.yml` により、GitHub リポジトリに push して Actions を実行するだけで、Windows 用 `lectern.exe` / セットアップ `.exe` / `.msi` と macOS 用 `Lectern.app` / `.dmg` が自動ビルドされます。
+#### 方法 A: GitHub Actions でタグ付けして Releases に自動登録する（Windows 実機不要・おすすめ）
+同梱の [.github/workflows/release-build.yml](file:///Users/nagatani/.gemini/antigravity/scratch/lectern/.github/workflows/release-build.yml) により、`v0.1.0` のようなバージョンタグを付けて GitHub に push するだけで、macOS ランナーと Windows ランナーが自動で並列ビルドを行い、**GitHub の Releases ページに以下のビルド済みファイルを自動登録・公開**します：
+- **macOS 用**:
+  - `Lectern-macos-arm64.app.zip`（解凍してそのまま使える `Lectern.app` 本体）
+  - `Lectern_0.1.0_aarch64.dmg`（ディスクイメージインストーラ）
+- **Windows 用**:
+  - `lectern-windows-x64-portable.exe`（インストール不要で単体起動するポータブル `.exe`）
+  - `Lectern_0.1.0_x64-setup.exe`（NSIS セットアップインストーラ）
+  - `Lectern_0.1.0_x64_en-US.msi`（MSI インストーラ）
+
+```bash
+# リリースタグを作成して GitHub に push すると自動で Release ビルド＆公開が走ります
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 #### 方法 B: Windows PC 上でビルドする
 ```powershell

@@ -1,4 +1,4 @@
-name: Build Desktop Apps (macOS & Windows)
+name: Release Build (macOS & Windows)
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - "v*"
 
 jobs:
-  build-tauri:
+  build-and-release:
     permissions:
       contents: write
     strategy:
@@ -15,8 +15,10 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            os_label: macos-arm64
             args: "--target aarch64-apple-darwin"
           - platform: windows-latest
+            os_label: windows-x64
             args: ""
 
     runs-on: ${{ matrix.platform }}
@@ -43,20 +45,65 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build Tauri Application (.app / .dmg / .exe / .msi)
+      # 1. Build Tauri bundles (.app, .dmg, setup.exe, .msi)
+      # タグ push 時 (v*) は tauri-action が自動で GitHub Release を作成しインストーラを登録します
+      - name: Build Tauri Application & Publish to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Lectern ${{ github.ref_name }}"
+          releaseBody: |
+            ## Lectern ${{ github.ref_name }}
+            Rust + Tauri 製の講義資料マークダウンエディタ & HTML/PDF 変換ツールです。
+
+            ### ダウンロードファイル一覧
+            - **macOS (Apple Silicon)**:
+              - `Lectern_..._aarch64.dmg`: macOS ディスクイメージインストーラ
+              - `Lectern-macos-arm64.app.zip`: 解凍してそのまま使える `Lectern.app` 本体
+            - **Windows (64-bit)**:
+              - `Lectern_..._x64-setup.exe`: Windows セットアップインストーラ (NSIS)
+              - `Lectern_..._x64_en-US.msi`: Windows MSI インストーラ
+              - `lectern-windows-x64-portable.exe`: インストール不要で単体動作するポータブル `.exe`
+          releaseDraft: false
+          prerelease: false
           args: ${{ matrix.args }}
 
+      # 2. macOS: Lectern.app を Finder でそのまま解凍して使える .app.zip にパッケージング
+      - name: Archive Lectern.app as zip (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          cd src-tauri/target/aarch64-apple-darwin/release/bundle/macos
+          ditto -c -k --sequesterRsrc --keepParent "Lectern.app" "Lectern-macos-arm64.app.zip"
+
+      # 3. Windows: 単体実行可能なポータブル .exe を分かりやすい名前にコピー
+      - name: Prepare portable .exe (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          Copy-Item "src-tauri/target/release/lectern.exe" "src-tauri/target/release/lectern-windows-x64-portable.exe"
+
+      # 4. タグ push 時 (v*) は、単体 .app.zip とポータブル .exe も同じ GitHub Release に追加登録
+      - name: Attach standalone .app.zip and portable .exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Lectern-macos-arm64.app.zip
+            src-tauri/target/release/lectern-windows-x64-portable.exe
+
+      # 5. Actions タブからの手動ビルド時にも Artifacts からダウンロード可能にする
       - name: Upload built bundles as workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Lectern-${{ matrix.platform }}
+          name: Lectern-${{ matrix.os_label }}
           path: |
-            src-tauri/target/**/release/bundle/macos/*.app
+            src-tauri/target/**/release/bundle/macos/Lectern-macos-arm64.app.zip
             src-tauri/target/**/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/lectern.exe
+            src-tauri/target/release/lectern-windows-x64-portable.exe
