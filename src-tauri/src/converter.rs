@@ -1,15 +1,23 @@
+use base64::Engine;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use syntect::highlighting::ThemeSet;
 use syntect::html::highlighted_html_for_string;
 use syntect::parsing::SyntaxSet;
 
+/// ビルド時に `.woff2` フォントまで Base64 インライン化された完全自己完結の KaTeX CSS
+const INLINED_KATEX_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/katex_standalone.css"));
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompileResult {
     pub html: String,
     pub slide_count: usize,
+    pub course: String,
     pub title: String,
+    pub description: String,
     pub author: String,
     pub date: String,
     pub theme: Option<String>,
@@ -18,34 +26,62 @@ pub struct CompileResult {
 
 #[derive(Debug, Default, Clone)]
 pub struct FrontMatter {
+    pub course: String,
     pub title: String,
     pub subtitle: String,
+    pub description: String,
     pub author: String,
     pub date: String,
     pub theme: Option<String>,
 }
 
 fn build_doc_header_html(meta: &FrontMatter) -> String {
-    if meta.title.is_empty() && meta.subtitle.is_empty() && meta.author.is_empty() && meta.date.is_empty() {
+    if meta.course.is_empty()
+        && meta.title.is_empty()
+        && meta.subtitle.is_empty()
+        && meta.description.is_empty()
+        && meta.author.is_empty()
+        && meta.date.is_empty()
+    {
         return String::new();
     }
+    let course_html = if !meta.course.is_empty() {
+        format!(
+            r#"<div class="lecture-doc-course"><span class="course-badge">{}</span></div>"#,
+            escape_html(&meta.course)
+        )
+    } else {
+        String::new()
+    };
     let title_html = if !meta.title.is_empty() {
-        format!(r#"<h1 class="lecture-doc-title title">{}</h1>"#, escape_html(&meta.title))
+        format!(
+            r#"<h1 class="lecture-doc-title title">{}</h1>"#,
+            escape_html(&meta.title)
+        )
     } else {
         String::new()
     };
     let subtitle_html = if !meta.subtitle.is_empty() {
-        format!(r#"<h1 class="lecture-doc-subtitle subtitle">{}</h1>"#, escape_html(&meta.subtitle))
+        format!(
+            r#"<h1 class="lecture-doc-subtitle subtitle">{}</h1>"#,
+            escape_html(&meta.subtitle)
+        )
     } else {
         String::new()
     };
     let author_html = if !meta.author.is_empty() {
-        format!(r#"<span class="lecture-doc-author author">{}</span>"#, escape_html(&meta.author))
+        format!(
+            r#"<span class="lecture-doc-author author">{}</span>"#,
+            escape_html(&meta.author)
+        )
     } else {
         String::new()
     };
     let date_html = if !meta.date.is_empty() {
-        format!(r#"<span class="lecture-doc-date date">{}</span>"#, escape_html(&meta.date))
+        format!(
+            r#"<span class="lecture-doc-date date">{}</span>"#,
+            escape_html(&meta.date)
+        )
     } else {
         String::new()
     };
@@ -56,18 +92,39 @@ fn build_doc_header_html(meta: &FrontMatter) -> String {
         String::new()
     };
 
-    format!(r#"<header class="lecture-doc-header">{}{}{}</header>"#, title_html, subtitle_html, meta_block)
+    let desc_html = if !meta.description.is_empty() {
+        format!(
+            r#"<div class="lecture-doc-description"><div class="description-label">資料概要</div><p class="description-text">{}</p></div>"#,
+            escape_html(&meta.description)
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<header class="lecture-doc-header">{}{}{}{}{}</header>"#,
+        course_html, title_html, subtitle_html, meta_block, desc_html
+    )
 }
 
 /// マークダウン文字列を解析し、指定されたモード ("document" | "slide") に応じたHTMLを生成する
 pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
-    compile_lecture_markdown_with_theme(markdown, mode, None)
+    compile_lecture_markdown_with_options(markdown, mode, None, None)
 }
 
 pub fn compile_lecture_markdown_with_theme(
     markdown: &str,
     mode: &str,
     active_theme: Option<&str>,
+) -> CompileResult {
+    compile_lecture_markdown_with_options(markdown, mode, active_theme, None)
+}
+
+pub fn compile_lecture_markdown_with_options(
+    markdown: &str,
+    mode: &str,
+    active_theme: Option<&str>,
+    base_dir: Option<&Path>,
 ) -> CompileResult {
     let start = Instant::now();
     let (meta, body_md) = parse_frontmatter(markdown);
@@ -96,11 +153,18 @@ pub fn compile_lecture_markdown_with_theme(
 
     if mode == "slide" {
         for (idx, slide_md) in raw_slides.iter().enumerate() {
-            let slide_inner = render_markdown_chunk(slide_md, &ss, theme);
+            let slide_inner = render_markdown_chunk(slide_md, &ss, theme, base_dir);
             let title_header = if idx == 0 {
                 build_doc_header_html(&meta)
             } else {
                 String::new()
+            };
+
+            let footer_label = match (meta.course.is_empty(), meta.title.is_empty()) {
+                (false, false) => format!("{} — {}", meta.course, meta.title),
+                (false, true) => meta.course.clone(),
+                (true, false) => meta.title.clone(),
+                (true, true) => "Lectern".to_string(),
             };
 
             final_html.push_str(&format!(
@@ -108,7 +172,7 @@ pub fn compile_lecture_markdown_with_theme(
                 idx,
                 title_header,
                 slide_inner,
-                escape_html(if meta.title.is_empty() { "Lectern" } else { &meta.title }),
+                escape_html(&footer_label),
                 idx + 1,
                 slide_count
             ));
@@ -116,16 +180,20 @@ pub fn compile_lecture_markdown_with_theme(
     } else {
         // Document (A4 Handout) Mode
         final_html.push_str(&build_doc_header_html(&meta));
-        let doc_inner = render_markdown_chunk(&preprocessed, &ss, theme);
+        let doc_inner = render_markdown_chunk(&preprocessed, &ss, theme, base_dir);
         final_html.push_str(&doc_inner);
     }
 
+    // HTMLタグ `<img src="...">` で直書きされたローカル画像も Base64 Data URI に変換
+    let final_html = embed_local_images_in_html(&final_html, base_dir);
     let elapsed_ms = start.elapsed().as_millis();
 
     CompileResult {
         html: final_html,
         slide_count,
+        course: meta.course,
         title: meta.title,
+        description: meta.description,
         author: meta.author,
         date: meta.date,
         theme: meta.theme,
@@ -149,8 +217,10 @@ fn parse_frontmatter(input: &str) -> (FrontMatter, String) {
                 let key = k.trim().to_lowercase();
                 let val = v.trim().trim_matches(['"', '\'']).to_string();
                 match key.as_str() {
+                    "course" | "lecture" | "subject" => meta.course = val,
                     "title" => meta.title = val,
                     "subtitle" => meta.subtitle = val,
+                    "description" | "summary" | "abstract" => meta.description = val,
                     "author" => meta.author = val,
                     "date" => meta.date = val,
                     "theme" => {
@@ -248,11 +318,141 @@ fn preprocess_callouts(markdown: &str) -> String {
     out
 }
 
+/// 画像拡張子から MIME タイプを判定する
+fn detect_image_mime(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        _ => None,
+    }
+}
+
+/// URL パーセントエンコード (`%20` 等) をデコードするヘルパー
+fn percent_decode_path(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            ) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 指定された画像パス（相対パス・絶対パス・file://）を解決し、`data:<mime>;base64,...` 文字列に変換する
+pub fn resolve_image_to_data_uri(img_src: &str, base_dir: Option<&Path>) -> Option<String> {
+    let trimmed = img_src.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with("data:")
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+    {
+        return None;
+    }
+
+    let without_scheme = trimmed
+        .strip_prefix("file://")
+        .unwrap_or(trimmed);
+    let decoded = percent_decode_path(without_scheme);
+    let candidate = PathBuf::from(&decoded);
+
+    let resolved_path = if candidate.is_absolute() && candidate.exists() {
+        candidate
+    } else if let Some(base) = base_dir {
+        let joined = base.join(&candidate);
+        if joined.exists() {
+            joined
+        } else {
+            return None;
+        }
+    } else if candidate.exists() {
+        candidate
+    } else {
+        return None;
+    };
+
+    if !resolved_path.is_file() {
+        return None;
+    }
+
+    let mime = detect_image_mime(&resolved_path)?;
+    let bytes = fs::read(&resolved_path).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Some(format!("data:{};base64,{}", mime, b64))
+}
+
+/// HTML 文字列内の `<img ... src="..." ...>` タグに含まれるローカル画像パスをすべて Base64 Data URI に変換する
+pub fn embed_local_images_in_html(html: &str, base_dir: Option<&Path>) -> String {
+    let Some(base) = base_dir else {
+        return html.to_string();
+    };
+
+    let mut result = String::with_capacity(html.len());
+    let mut rest = html;
+
+    while let Some(img_idx) = rest.find("<img") {
+        result.push_str(&rest[..img_idx]);
+        let after_img = &rest[img_idx..];
+
+        let Some(tag_end) = after_img.find('>') else {
+            result.push_str(after_img);
+            return result;
+        };
+
+        let img_tag = &after_img[..=tag_end];
+        let replaced_tag = replace_img_tag_src_with_base64(img_tag, Some(base));
+        result.push_str(&replaced_tag);
+        rest = &after_img[tag_end + 1..];
+    }
+
+    result.push_str(rest);
+    result
+}
+
+fn replace_img_tag_src_with_base64(img_tag: &str, base_dir: Option<&Path>) -> String {
+    for pattern in ["src=\"", "src='"] {
+        if let Some(src_start) = img_tag.find(pattern) {
+            let quote = pattern.chars().last().unwrap();
+            let val_start = src_start + pattern.len();
+            if let Some(val_end_rel) = img_tag[val_start..].find(quote) {
+                let val_end = val_start + val_end_rel;
+                let src_val = &img_tag[val_start..val_end];
+                if let Some(data_uri) = resolve_image_to_data_uri(src_val, base_dir) {
+                    let mut new_tag = String::with_capacity(img_tag.len() + data_uri.len());
+                    new_tag.push_str(&img_tag[..val_start]);
+                    new_tag.push_str(&data_uri);
+                    new_tag.push_str(&img_tag[val_end..]);
+                    return new_tag;
+                }
+            }
+        }
+    }
+    img_tag.to_string()
+}
+
 /// `pulldown-cmark` + `syntect` で Markdown チャンクを HTML に変換する
 fn render_markdown_chunk(
     markdown: &str,
     ss: &SyntaxSet,
     theme: &syntect::highlighting::Theme,
+    base_dir: Option<&Path>,
 ) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
@@ -269,11 +469,30 @@ fn render_markdown_chunk(
 
     for event in parser {
         match event {
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
+                // Markdown 画像記法 `![alt](path.jpg)` のローカル画像を Base64 Data URI に変換
+                let new_url = resolve_image_to_data_uri(&dest_url, base_dir)
+                    .map( Into::into)
+                    .unwrap_or(dest_url);
+                events.push(Event::Start(Tag::Image {
+                    link_type,
+                    dest_url: new_url,
+                    title,
+                    id,
+                }));
+            }
             Event::Start(Tag::CodeBlock(kind)) => {
                 in_code_block = true;
                 code_buffer.clear();
                 code_lang = match kind {
-                    CodeBlockKind::Fenced(lang) => lang.split_whitespace().next().unwrap_or("").to_string(),
+                    CodeBlockKind::Fenced(lang) => {
+                        lang.split_whitespace().next().unwrap_or("").to_string()
+                    }
                     CodeBlockKind::Indented => String::new(),
                 };
             }
@@ -291,7 +510,9 @@ fn render_markdown_chunk(
                         .find_syntax_by_token(&code_lang)
                         .unwrap_or_else(|| ss.find_syntax_plain_text());
                     let highlighted = highlighted_html_for_string(&code_buffer, ss, syntax, theme)
-                        .unwrap_or_else(|_| format!("<pre><code>{}</code></pre>", escape_html(&code_buffer)));
+                        .unwrap_or_else(|_| {
+                            format!("<pre><code>{}</code></pre>", escape_html(&code_buffer))
+                        });
                     let lang_label = if code_lang.is_empty() {
                         "TEXT".to_string()
                     } else {
@@ -341,7 +562,7 @@ pub fn escape_html(input: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// エクスポートおよびPDF印刷用の自己完結型スタンドアロンHTMLを生成する
+/// エクスポートおよびPDF印刷用の100%自己完結型スタンドアロンHTML（外部CSS・外部スクリプト一切なし）を生成する
 pub fn build_standalone_html(
     markdown: &str,
     rendered_body_html: Option<&str>,
@@ -349,10 +570,24 @@ pub fn build_standalone_html(
     theme_id: Option<&str>,
     theme_css: Option<&str>,
 ) -> String {
-    let compiled = compile_lecture_markdown_with_theme(markdown, mode, theme_id);
-    let body_content = rendered_body_html
+    build_standalone_html_with_base_dir(markdown, rendered_body_html, mode, theme_id, theme_css, None)
+}
+
+pub fn build_standalone_html_with_base_dir(
+    markdown: &str,
+    rendered_body_html: Option<&str>,
+    mode: &str,
+    theme_id: Option<&str>,
+    theme_css: Option<&str>,
+    base_dir: Option<&Path>,
+) -> String {
+    let compiled = compile_lecture_markdown_with_options(markdown, mode, theme_id, base_dir);
+    let raw_body = rendered_body_html
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(&compiled.html);
+
+    // 渡された HTML 内に残っているローカル画像パスもすべて Base64 Data URI に変換
+    let body_content = embed_local_images_in_html(raw_body, base_dir);
 
     let effective_theme_id = theme_id
         .filter(|s| !s.trim().is_empty())
@@ -366,17 +601,6 @@ pub fn build_standalone_html(
     } else {
         &compiled.title
     };
-
-    // ローカルの node_modules に katex.min.css があればインライン埋め込みし、オフラインPDF生成でも数式スタイルを保証する
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let katex_css_tag = manifest_dir
-        .parent()
-        .map(|p| p.join("node_modules/katex/dist/katex.min.css"))
-        .and_then(|css_path| std::fs::read_to_string(css_path).ok())
-        .map(|css| format!("<style>{}</style>", css))
-        .unwrap_or_else(|| {
-            r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css" crossorigin="anonymous" />"#.to_string()
-        });
 
     let page_css = if mode == "slide" {
         r#"
@@ -465,8 +689,10 @@ pub fn build_standalone_html(
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title}</title>
-  {katex_css_tag}
-  <style>
+  <style id="katex-standalone-css">
+{katex_inlined_css}
+  </style>
+  <style id="lectern-base-css">
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
@@ -480,8 +706,22 @@ pub fn build_standalone_html(
     }}
     .lecture-doc-header {{
       border-bottom: 2px solid #2563eb;
-      padding-bottom: 14px;
+      padding-bottom: 16px;
       margin-bottom: 24px;
+    }}
+    .lecture-doc-course {{
+      margin-bottom: 8px;
+    }}
+    .course-badge {{
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
     }}
     .lecture-doc-title {{
       font-size: 28px;
@@ -495,9 +735,31 @@ pub fn build_standalone_html(
       font-size: 13px;
       color: #64748b;
     }}
+    .lecture-doc-description {{
+      margin-top: 14px;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border-left: 3px solid #64748b;
+      border-radius: 0 6px 6px 0;
+    }}
+    .description-label {{
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #475569;
+      margin-bottom: 2px;
+    }}
+    .description-text {{
+      margin: 0 !important;
+      font-size: 13.5px !important;
+      line-height: 1.6 !important;
+      color: #334155 !important;
+    }}
     h1 {{ font-size: 1.8rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25em; margin-top: 0.5em; }}
     h2 {{ font-size: 1.4rem; color: #2563eb; margin-top: 0.9em; }}
     h3 {{ font-size: 1.15rem; margin-top: 0.8em; }}
+    img {{ max-width: 100%; height: auto; border-radius: 4px; }}
     code:not(pre code) {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       background: #eef2f9;
@@ -602,39 +864,29 @@ pub fn build_standalone_html(
     {body_content}
   </article>
   <script>
-    // CLI出力時などで未レンダリングの数式やMermaid図表が残っている場合のみCDNで補完
-    window.addEventListener("DOMContentLoaded", () => {{
-      const unrendered = document.querySelectorAll(".math-inline:not(:has(.katex)), .math-display:not(:has(.katex))");
-      if (unrendered.length > 0) {{
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.js";
-        s.onload = () => {{
-          unrendered.forEach((el) => {{
-            const tex = el.getAttribute("data-math") || "";
-            const isDisplay = el.classList.contains("math-display");
-            if (window.katex) window.katex.render(tex, el, {{ displayMode: isDisplay, throwOnError: false }});
-          }});
-        }};
-        document.head.appendChild(s);
-      }}
-      const unrenderedMermaid = document.querySelectorAll(".mermaid-container:not(:has(svg)) .mermaid");
-      if (unrenderedMermaid.length > 0) {{
-        const m = document.createElement("script");
-        m.src = "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.min.js";
-        m.onload = () => {{
-          if (window.mermaid) {{
-            window.mermaid.initialize({{ startOnLoad: false, theme: "default" }});
-            window.mermaid.run({{ querySelector: ".mermaid" }});
-          }}
-        }};
-        document.head.appendChild(m);
-      }}
-    }});
+    // スライドモード時に単体HTMLファイル上でキーボード矢印キー (← / →) でスライド送りできるオフラインスクリプト
+    (function () {{
+      if (!document.body.classList.contains("mode-slide")) return;
+      const slides = Array.from(document.querySelectorAll(".lecture-slide"));
+      if (slides.length <= 1) return;
+      let current = 0;
+      window.addEventListener("keydown", function (e) {{
+        if (e.key === "ArrowRight" || e.key === "PageDown") {{
+          e.preventDefault();
+          current = Math.min(slides.length - 1, current + 1);
+          slides[current].scrollIntoView({{ behavior: "smooth", block: "center" }});
+        }} else if (e.key === "ArrowLeft" || e.key === "PageUp") {{
+          e.preventDefault();
+          current = Math.max(0, current - 1);
+          slides[current].scrollIntoView({{ behavior: "smooth", block: "center" }});
+        }}
+      }});
+    }})();
   </script>
 </body>
 </html>"#,
         title = escape_html(title),
-        katex_css_tag = katex_css_tag,
+        katex_inlined_css = INLINED_KATEX_CSS,
         page_css = page_css,
         custom_theme_style = custom_theme_style,
         mode = escape_html(mode),

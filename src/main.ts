@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
@@ -14,10 +15,19 @@ interface FileEntry {
   is_dir: boolean;
 }
 
+interface DroppedPathInfo {
+  is_dir: boolean;
+  workspace_path: string;
+  file_path: string | null;
+  file_name: string | null;
+}
+
 interface CompileResult {
   html: string;
   slide_count: number;
+  course: string;
   title: string;
+  description: string;
   author: string;
   date: string;
   theme: string | null;
@@ -81,6 +91,8 @@ const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HT
 const btnOpenFolder = document.getElementById("btn-open-folder") as HTMLButtonElement;
 const btnNewFile = document.getElementById("btn-new-file") as HTMLButtonElement;
 const btnSaveFile = document.getElementById("btn-save-file") as HTMLButtonElement;
+const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
+const btnRevealExplorer = document.getElementById("btn-reveal-explorer") as HTMLButtonElement;
 const btnRefreshTree = document.getElementById("btn-refresh-tree") as HTMLButtonElement;
 const btnModeDoc = document.getElementById("mode-document") as HTMLButtonElement;
 const btnModeSlide = document.getElementById("mode-slide") as HTMLButtonElement;
@@ -113,6 +125,7 @@ const modalExport = document.getElementById("modal-export") as HTMLDialogElement
 const modalExportTitle = document.getElementById("modal-export-title") as HTMLHeadingElement;
 const modalExportMessage = document.getElementById("modal-export-message") as HTMLParagraphElement;
 const modalExportPath = document.getElementById("modal-export-path") as HTMLInputElement;
+const btnRevealExported = document.getElementById("btn-reveal-exported") as HTMLButtonElement;
 
 const modalHelp = document.getElementById("modal-help") as HTMLDialogElement;
 
@@ -496,6 +509,17 @@ function scheduleCompile(): void {
   }, 120);
 }
 
+function getCurrentBaseDir(): string | null {
+  if (state.currentFilePath) {
+    const normalized = state.currentFilePath.replace(/\\/g, "/");
+    const lastSlash = normalized.lastIndexOf("/");
+    if (lastSlash > 0) {
+      return state.currentFilePath.substring(0, lastSlash);
+    }
+  }
+  return state.workspacePath || null;
+}
+
 async function compileCurrentMarkdown(syncThemeFromFrontmatter = true): Promise<void> {
   const markdown = elEditor.value;
   try {
@@ -503,6 +527,7 @@ async function compileCurrentMarkdown(syncThemeFromFrontmatter = true): Promise<
       markdown,
       mode: state.mode,
       themeId: syncThemeFromFrontmatter ? null : state.currentThemeId,
+      baseDir: getCurrentBaseDir(),
     });
     state.lastCompileResult = res;
     state.totalSlides = Math.max(1, res.slide_count);
@@ -582,11 +607,11 @@ async function loadWorkspace(workspacePath: string): Promise<void> {
     });
     state.workspacePath = workspacePath;
     elWorkspacePathLabel.textContent = workspacePath;
-    elWorkspacePathLabel.title = workspacePath;
+    elWorkspacePathLabel.title = `${workspacePath} (クリックでFinder / エクスプローラー表示)`;
 
     await loadThemes();
     renderFileTree(entries);
-    setStatus(`ワークスペースを読み込みました (${entries.length} 項目)`);
+    setStatus(`ディレクトリを開きました: ${workspacePath} (${entries.length} 項目)`);
 
     // Auto-open the first markdown file if none is open
     const firstMd = entries.find((e) => !e.is_dir && e.name.endsWith(".md"));
@@ -598,13 +623,57 @@ async function loadWorkspace(workspacePath: string): Promise<void> {
   }
 }
 
+async function navigateToParentDirectory(): Promise<void> {
+  if (!state.workspacePath) return;
+  try {
+    const parent = await invoke<string | null>("get_parent_directory", {
+      path: state.workspacePath,
+    });
+    if (parent && parent !== state.workspacePath) {
+      await loadWorkspace(parent);
+    } else {
+      setStatus("これ以上上の階層はありません");
+    }
+  } catch (err) {
+    setStatus(`親フォルダ移動エラー: ${String(err)}`);
+  }
+}
+
+async function revealInExplorer(targetPath: string): Promise<void> {
+  if (!targetPath) return;
+  try {
+    await invoke("reveal_in_file_explorer", { path: targetPath });
+    setStatus(`ファイルエクスプローラーで開きました: ${targetPath}`);
+  } catch (err) {
+    setStatus(`エクスプローラー起動エラー: ${String(err)}`);
+  }
+}
+
 function renderFileTree(entries: FileEntry[]): void {
   elFileTree.innerHTML = "";
+
+  // 親ディレクトリへ移動する ".." エントリを先頭に配置
+  const parentLi = document.createElement("li");
+  parentLi.className = "file-tree-dir";
+  parentLi.title = "親フォルダへ移動";
+  parentLi.textContent = "📁 .. (上の階層へ)";
+  parentLi.addEventListener("click", () => {
+    void navigateToParentDirectory();
+  });
+  elFileTree.appendChild(parentLi);
+
   for (const entry of entries) {
     const li = document.createElement("li");
     if (entry.is_dir) {
       li.className = "file-tree-dir";
+      li.title = `クリックして「${entry.name}」フォルダを開く`;
       li.textContent = `📁 ${entry.rel_path}`;
+      li.addEventListener("click", async () => {
+        if (state.isDirty && state.currentFilePath) {
+          await saveCurrentFile();
+        }
+        await loadWorkspace(entry.path);
+      });
       elFileTree.appendChild(li);
       continue;
     }
@@ -687,22 +756,22 @@ async function saveCurrentFile(): Promise<void> {
 }
 
 async function createNewFileFlow(): Promise<void> {
-  const name = await promptModal(
-    "新規講義ファイルの作成",
-    "作成するMarkdownファイル名を入力してください（例: lecture03_graph.md）",
-    "new_lecture.md"
-  );
-  if (!name) return;
-
   try {
-    const createdPath = await invoke<string>("create_markdown_file", {
+    const createdPath = await invoke<string | null>("create_markdown_file", {
       workspacePath: state.workspacePath,
-      fileName: name,
+      fileName: null,
     });
-    await loadWorkspace(state.workspacePath);
-    const rel = name.endsWith(".md") ? name : `${name}.md`;
-    await openFile(createdPath, rel);
-    setStatus(`新規ファイルを作成しました: ${rel}`);
+    if (!createdPath) {
+      setStatus("新規ファイルの作成をキャンセルしました");
+      return;
+    }
+    const info = await invoke<DroppedPathInfo>("inspect_dropped_path", {
+      path: createdPath,
+    });
+    await loadWorkspace(info.workspace_path);
+    const displayName = info.file_name || createdPath;
+    await openFile(createdPath, displayName);
+    setStatus(`新規ファイルを作成しました: ${displayName}`);
   } catch (err) {
     setStatus(`作成エラー: ${String(err)}`);
   }
@@ -732,7 +801,7 @@ async function deleteFile(filePath: string, relPath: string): Promise<void> {
 }
 
 // ============================================================================
-// Export to Standalone HTML & High-Quality PDF
+// Export to Standalone HTML & High-Quality PDF (with OS Native Save Dialogs)
 // ============================================================================
 
 function getFullyRenderedPreviewHtml(): string {
@@ -746,10 +815,10 @@ async function exportHtmlFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
-  setStatus(`HTMLファイルを生成しています (テーマ: ${state.currentThemeId})...`);
+  setStatus(`HTMLファイルの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
-    const res = await invoke<ExportResult>("export_lecture_html", {
+    const res = await invoke<ExportResult | null>("export_lecture_html", {
       sourcePath: state.currentFilePath || null,
       workspacePath: state.workspacePath,
       markdown: elEditor.value,
@@ -758,6 +827,10 @@ async function exportHtmlFlow(): Promise<void> {
       themeId: state.currentThemeId,
       customCss: state.inlineCustomCss || null,
     });
+    if (!res) {
+      setStatus("HTML出力をキャンセルしました");
+      return;
+    }
     setStatus(res.message);
     showExportModal("🌐 HTML出力完了", res.message, res.output_path);
   } catch (err) {
@@ -769,10 +842,10 @@ async function exportPdfFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
-  setStatus(`ブラウザ印刷エンジンでPDFを生成しています (テーマ: ${state.currentThemeId})...`);
+  setStatus(`PDFファイルの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
-    const res = await invoke<ExportResult>("export_lecture_pdf", {
+    const res = await invoke<ExportResult | null>("export_lecture_pdf", {
       sourcePath: state.currentFilePath || null,
       workspacePath: state.workspacePath,
       markdown: elEditor.value,
@@ -781,6 +854,10 @@ async function exportPdfFlow(): Promise<void> {
       themeId: state.currentThemeId,
       customCss: state.inlineCustomCss || null,
     });
+    if (!res) {
+      setStatus("PDF出力をキャンセルしました");
+      return;
+    }
     setStatus(res.message);
     showExportModal("📑 PDF出力完了", res.message, res.output_path);
   } catch (err) {
@@ -929,11 +1006,23 @@ function bindEvents(): void {
 
   btnNewFile.addEventListener("click", () => void createNewFileFlow());
   btnSaveFile.addEventListener("click", () => void saveCurrentFile());
+  btnParentDir.addEventListener("click", () => void navigateToParentDirectory());
+  btnRevealExplorer.addEventListener("click", () =>
+    void revealInExplorer(state.currentFilePath || state.workspacePath)
+  );
+  elWorkspacePathLabel.addEventListener("click", () =>
+    void revealInExplorer(state.workspacePath)
+  );
   btnRefreshTree.addEventListener("click", () => void loadWorkspace(state.workspacePath));
 
-  // Export buttons
+  // Export buttons & Reveal exported file in Finder / Explorer
   btnExportHtml.addEventListener("click", () => void exportHtmlFlow());
   btnExportPdf.addEventListener("click", () => void exportPdfFlow());
+  btnRevealExported.addEventListener("click", () => {
+    if (modalExportPath.value) {
+      void revealInExplorer(modalExportPath.value);
+    }
+  });
 
   // App UI Theme & Help
   btnThemeToggle.addEventListener("click", toggleColorScheme);
@@ -949,10 +1038,90 @@ function bindEvents(): void {
       if (key) insertSnippetAtCursor(key);
     });
   });
+
+  const btnInsertImage = document.getElementById("btn-insert-image");
+  if (btnInsertImage) {
+    btnInsertImage.addEventListener("click", async () => {
+      try {
+        const mdImageTag = await invoke<string | null>("pick_image_file", {
+          workspacePath: state.workspacePath,
+          currentFilePath: state.currentFilePath || null,
+        });
+        if (mdImageTag) {
+          insertRawTextAtCursor(`\n${mdImageTag}\n`);
+          setStatus(`画像を挿入しました (Base64自動埋め込み対象)`);
+        }
+      } catch (err) {
+        setStatus(`画像選択エラー: ${String(err)}`);
+      }
+    });
+  }
+}
+
+function insertRawTextAtCursor(text: string): void {
+  const start = elEditor.selectionStart;
+  const end = elEditor.selectionEnd;
+  const value = elEditor.value;
+
+  elEditor.value = value.substring(0, start) + text + value.substring(end);
+  elEditor.selectionStart = elEditor.selectionEnd = start + text.length;
+  elEditor.focus();
+
+  markDirty(true);
+  updateLineNumbersAndStats();
+  scheduleCompile();
+}
+
+function isImagePath(p: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i.test(p);
+}
+
+async function setupNativeDragDrop(): Promise<void> {
+  try {
+    await getCurrentWebview().onDragDropEvent(async (event) => {
+      if (event.payload.type === "drop" && event.payload.paths.length > 0) {
+        const droppedPath = event.payload.paths[0];
+        if (isImagePath(droppedPath)) {
+          const normalized = droppedPath.replace(/\\/g, "/");
+          const fileName = normalized.split("/").pop() || "image";
+          const stem = fileName.replace(/\.[^.]+$/, "");
+          const baseDir = getCurrentBaseDir()?.replace(/\\/g, "/");
+          const relPath =
+            baseDir && normalized.startsWith(baseDir + "/")
+              ? normalized.substring(baseDir.length + 1)
+              : normalized;
+          insertRawTextAtCursor(`\n![${stem}](${relPath})\n`);
+          setStatus(`ドロップされた画像を挿入しました: ${fileName}`);
+          return;
+        }
+
+        try {
+          const info = await invoke<DroppedPathInfo>("inspect_dropped_path", {
+            path: droppedPath,
+          });
+          if (state.isDirty && state.currentFilePath) {
+            await saveCurrentFile();
+          }
+          if (info.is_dir) {
+            state.currentFilePath = "";
+            await loadWorkspace(info.workspace_path);
+          } else if (info.file_path && info.file_name) {
+            await loadWorkspace(info.workspace_path);
+            await openFile(info.file_path, info.file_name);
+          }
+        } catch (err) {
+          setStatus(`ドロップされたパスの読み込みに失敗: ${String(err)}`);
+        }
+      }
+    });
+  } catch (_) {
+    // Ignore if running outside Tauri webview
+  }
 }
 
 async function initApp(): Promise<void> {
   bindEvents();
+  void setupNativeDragDrop();
   try {
     const defaultWs = await invoke<string>("get_default_workspace");
     await loadWorkspace(defaultWs);

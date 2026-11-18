@@ -90,6 +90,7 @@
         <button type="button" class="chip-btn" data-insert="math-inline" title="インライン数式 ($ ... $) を挿入">$ インライン数式</button>
         <button type="button" class="chip-btn" data-insert="code-rust" title="シンタックスハイライト付きコードブロックを挿入">🦀 コードブロック</button>
         <button type="button" class="chip-btn" data-insert="mermaid" title="Mermaid フローチャート図を挿入">📊 Mermaid図表</button>
+        <button type="button" id="btn-insert-image" class="chip-btn" title="画像ファイル (PNG/JPEG等) を選択して挿入 (Base64自動埋め込み)">🖼️ 画像挿入</button>
         <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
         <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
         <div class="quick-bar-spacer"></div>
@@ -103,9 +104,13 @@
         <aside class="sidebar" aria-label="ファイルブラウザ">
           <div class="sidebar-header">
             <span class="sidebar-title">📁 ファイル一覧</span>
-            <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-sm" aria-label="ツリー更新" title="再読み込み">↻</button>
+            <div class="sidebar-actions">
+              <button type="button" id="btn-parent-dir" class="btn btn-icon btn-sm" aria-label="親フォルダへ移動" title="上の階層（親ディレクトリ）へ移動">⬆️</button>
+              <button type="button" id="btn-reveal-explorer" class="btn btn-icon btn-sm" aria-label="エクスプローラーで開く" title="現在のフォルダをFinder / エクスプローラーで開く">↗</button>
+              <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-sm" aria-label="ツリー更新" title="再読み込み">↻</button>
+            </div>
           </div>
-          <div id="workspace-path-label" class="workspace-path" title="現在のワークスペース"></div>
+          <div id="workspace-path-label" class="workspace-path" title="現在のワークスペース（クリックでFinder / エクスプローラー表示）"></div>
           <ul id="file-tree" class="file-tree" role="tree" aria-label="講義資料ファイルツリー"></ul>
         </aside>
 
@@ -212,6 +217,9 @@
           <input type="text" id="modal-export-path" class="dialog-input" readonly />
         </div>
         <div class="dialog-actions">
+          <button type="button" id="btn-reveal-exported" class="btn btn-secondary">
+            📂 保存先をFinder / エクスプローラーで開く
+          </button>
           <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
         </div>
       </form>
@@ -225,10 +233,12 @@
           <div class="help-card">
             <h3>1. フロントマター &amp; テーマ指定</h3>
             <pre><code>---
-title: アルゴリズムとデータ構造 第1回
+course: アルゴリズムとデータ構造
+title: 第1回 分割統治法と漸化式
+description: マスター定理の基礎と実装を解説します。
 author: 情報工学専攻 講義資料
 date: 2026-11-17
-theme: academic
+theme: handout
 ---</code></pre>
           </div>
           <div class="help-card">

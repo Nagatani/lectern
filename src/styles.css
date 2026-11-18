@@ -350,6 +350,12 @@ body {
   border-bottom: 1px solid var(--border-color);
 }
 
+.sidebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .pane-meta {
   font-size: 11px;
   font-weight: 500;
@@ -365,6 +371,12 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.workspace-path:hover {
+  color: var(--brand);
+  text-decoration: underline;
 }
 
 .file-tree {
@@ -399,12 +411,21 @@ body {
 }
 
 .file-tree-dir {
-  font-weight: 700;
-  color: var(--text-muted);
-  padding: 6px 8px 3px;
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-tree-dir:hover {
+  background-color: var(--bg-elevated);
+  color: var(--brand);
 }
 
 .file-item-name {
@@ -553,6 +574,22 @@ body {
   margin-bottom: 28px;
 }
 
+.lecture-doc-course {
+  margin-bottom: 8px;
+}
+
+.course-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+  border: 1px solid var(--border-color);
+}
+
 .lecture-doc-title {
   font-size: 28px;
   font-weight: 800;
@@ -565,6 +602,29 @@ body {
   gap: 16px;
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.lecture-doc-description {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background-color: var(--bg-elevated);
+  border-left: 3px solid var(--brand);
+  border-radius: 0 6px 6px 0;
+}
+
+.description-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.description-text {
+  margin: 0 !important;
+  font-size: 0.94rem !important;
+  line-height: 1.65 !important;
 }
 
 .lecture-render-root h1 {

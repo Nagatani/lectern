@@ -34,7 +34,7 @@ pub fn resolve_default_workspace() -> PathBuf {
     user_ws
 }
 
-/// 指定ディレクトリ内の `.md` ファイルおよびサブフォルダを再帰的に走査する（最大深さ3）
+/// 指定ディレクトリ直下のサブフォルダおよび `.md` ファイルを走査して返す
 pub fn list_markdown_workspace(workspace_path: &Path) -> Result<Vec<FileEntry>, String> {
     if !workspace_path.exists() {
         return Err(format!(
@@ -44,22 +44,18 @@ pub fn list_markdown_workspace(workspace_path: &Path) -> Result<Vec<FileEntry>, 
     }
 
     let mut entries = Vec::new();
-    collect_entries(workspace_path, workspace_path, 0, &mut entries)?;
+    collect_entries(workspace_path, &mut entries)?;
     Ok(entries)
 }
 
-fn collect_entries(
-    root: &Path,
-    current: &Path,
-    depth: usize,
-    out: &mut Vec<FileEntry>,
-) -> Result<(), String> {
-    if depth > 3 {
-        return Ok(());
-    }
-
-    let read_dir = fs::read_dir(current)
-        .map_err(|e| format!("ディレクトリの読み込みに失敗しました ({}): {}", current.display(), e))?;
+fn collect_entries(current: &Path, out: &mut Vec<FileEntry>) -> Result<(), String> {
+    let read_dir = fs::read_dir(current).map_err(|e| {
+        format!(
+            "ディレクトリの読み込みに失敗しました ({}): {}",
+            current.display(),
+            e
+        )
+    })?;
 
     let mut dirs = Vec::new();
     let mut files = Vec::new();
@@ -89,36 +85,27 @@ fn collect_entries(
         }
     }
 
-    dirs.sort_by(|a, b| a.0.cmp(&b.0));
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    dirs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
-    for (name, path) in files {
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+    // ディレクトリを先頭に配置（クリックでそのディレクトリを開けるようにする）
+    for (name, path) in dirs {
         out.push(FileEntry {
-            name,
+            name: name.clone(),
             path: path.to_string_lossy().to_string(),
-            rel_path: rel,
-            is_dir: false,
+            rel_path: name,
+            is_dir: true,
         });
     }
 
-    for (name, path) in dirs {
-        let rel = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+    // Markdownファイルを続けて配置
+    for (name, path) in files {
         out.push(FileEntry {
-            name,
+            name: name.clone(),
             path: path.to_string_lossy().to_string(),
-            rel_path: rel,
-            is_dir: true,
+            rel_path: name,
+            is_dir: false,
         });
-        collect_entries(root, &path, depth + 1, out)?;
     }
 
     Ok(())
@@ -161,7 +148,7 @@ pub fn create_new_markdown(workspace_path: &Path, file_name: &str) -> Result<Pat
         .unwrap_or("新規講義資料");
 
     let initial_template = format!(
-        "---\ntitle: {}\nauthor: 講義資料\ndate: 2026-11-17\ntheme: handout\n---\n\n# {}\n\nここに講義の導入や到達目標を記述します。\n\n> [!NOTE]\n> **ポイント**: 数式 $E = mc^2$ やコードブロック、Mermaid図表を記述できます。\n\n---\n\n# 2. 数式とアルゴリズムの例\n\n$$\n\\sum_{{i=1}}^{{n}} i = \\frac{{n(n+1)}}{{2}}\n$$\n\n```rust\nfn main() {{\n    println!(\"Hello, Lectern!\");\n}}\n```\n",
+        "---\ncourse: 講義科目名\ntitle: {}\ndescription: この講義資料の概要や学習目標を簡潔に記述します。\nauthor: 担当教員\ndate: 2026-11-19\ntheme: handout\n---\n\n# {}\n\nここに講義の導入や到達目標を記述します。\n\n> [!NOTE]\n> **ポイント**: 数式 $E = mc^2$ やコードブロック、Mermaid図表を記述できます。\n\n---\n\n# 2. 数式とアルゴリズムの例\n\n$$\n\\sum_{{i=1}}^{{n}} i = \\frac{{n(n+1)}}{{2}}\n$$\n\n```rust\nfn main() {{\n    println!(\"Hello, Lectern!\");\n}}\n```\n",
         stem, stem
     );
 

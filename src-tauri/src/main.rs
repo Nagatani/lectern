@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use lectern_lib::converter::{build_standalone_html, compile_lecture_markdown};
+use lectern_lib::converter::{build_standalone_html_with_base_dir, compile_lecture_markdown};
 use lectern_lib::fs_ops::{read_file_utf8, write_file_utf8};
 use lectern_lib::pdf::render_html_to_pdf;
 use lectern_lib::themes::resolve_theme_css;
@@ -75,12 +75,13 @@ fn run_cli(cli_args: &[String]) -> Result<(), String> {
     let requested_theme = cli_theme.as_deref().or(compiled.theme.as_deref());
     let (resolved_id, resolved_css) = resolve_theme_css(ws_dir, requested_theme, None);
 
-    let full_html = build_standalone_html(
+    let full_html = build_standalone_html_with_base_dir(
         &md,
         None,
         &mode,
         Some(&resolved_id),
         Some(&resolved_css),
+        ws_dir,
     );
 
     let out = output_path.unwrap_or_else(|| {

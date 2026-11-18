@@ -1,5 +1,7 @@
 ---
-title: アルゴリズムと計算量解析 第1回
+course: アルゴリズムとデータ構造
+title: 第1回 分割統治法と漸化式の解析
+description: 分割統治法の設計原理と、再帰アルゴリズムの時間計算量を厳密に導出するマスター定理の基礎およびRust実装を解説します。
 author: 情報理工学系 講義資料
 date: 2026-11-17
 theme: handout
@@ -33,9 +35,11 @@ $$
 
 ---
 
-# 2. 分割統治法の処理フロー (Mermaid図表)
+# 2. 分割統治法の処理フロー (Mermaid図表と画像の埋め込み)
 
 マージソート (Merge Sort) における分割 (Divide)・統治 (Conquer)・結合 (Combine) の流れは以下の通りです。
+
+![分割統治法の3ステップ概念図 (Divide → Conquer → Combine)](images/divide_and_conquer.png)
 
 ```mermaid
 flowchart TD

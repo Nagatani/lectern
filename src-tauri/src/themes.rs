@@ -75,8 +75,26 @@ body.theme-handout,
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-header {
   border-bottom: none !important;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.8rem;
   padding-bottom: 0;
+}
+
+.lecture-render-root[data-lecture-theme="handout"] .lecture-doc-course {
+  text-align: center;
+  margin-bottom: 0.4rem;
+}
+
+.lecture-render-root[data-lecture-theme="handout"] .course-badge {
+  display: inline-block;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "Hiragino Kaku Gothic ProN", sans-serif !important;
+  font-size: 0.88rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06rem;
+  color: #3f4756 !important;
+  background-color: #eaecef !important;
+  border: 1px solid #cfd4dc !important;
+  border-radius: 4px !important;
+  padding: 2px 12px !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-title {
@@ -86,16 +104,16 @@ body.theme-handout,
   font-size: 2rem !important;
   color: #232323 !important;
   letter-spacing: 0.05rem;
-  margin: 0.5rem auto !important;
+  margin: 0.4rem auto 0.6rem !important;
   text-align: center;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-subtitle {
   font-weight: normal;
-  font-size: 1.5rem;
+  font-size: 1.45rem;
   color: #232323 !important;
   text-align: center;
-  margin: 0.4rem auto 0.8rem;
+  margin: 0.3rem auto 0.8rem;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-meta {
@@ -107,7 +125,7 @@ body.theme-handout,
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-author {
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: normal;
   color: #232323 !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.2);
@@ -115,11 +133,37 @@ body.theme-handout,
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-date {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: normal;
   color: #444444 !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.2);
   padding-bottom: 0.2rem;
+}
+
+.lecture-render-root[data-lecture-theme="handout"] .lecture-doc-description {
+  margin-top: 1.1rem;
+  padding: 0.75rem 1.1rem;
+  background-color: #ffffff !important;
+  border: 1px solid #dddddd !important;
+  border-left: 4px solid #6b7280 !important;
+  border-radius: 4px !important;
+}
+
+.lecture-render-root[data-lecture-theme="handout"] .description-label {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "Hiragino Kaku Gothic ProN", sans-serif !important;
+  font-size: 0.78rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.05rem;
+  color: #555555 !important;
+  margin-bottom: 0.25rem;
+}
+
+.lecture-render-root[data-lecture-theme="handout"] .description-text {
+  font-family: "游明朝", YuMincho, "ヒラギノ明朝 ProN W3", "Hiragino Mincho ProN", serif !important;
+  font-size: 0.96rem !important;
+  line-height: 1.7 !important;
+  color: #232323 !important;
+  margin: 0 !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h1,
@@ -287,14 +331,14 @@ body.theme-handout,
 
 .lecture-render-root[data-lecture-theme="handout"] code:not(pre code) {
   display: inline-block;
-  border: 1px solid #555555 !important;
-  background-color: #666666 !important;
-  color: #ffffff !important;
+  border: 1px solid #d4d7dd !important;
+  background-color: #eceef2 !important;
+  color: #2c353d !important;
   white-space: nowrap;
   border-radius: 3px !important;
-  padding: 0.1em 0.45em !important;
-  margin: 0 3px;
-  font-size: 0.88em !important;
+  padding: 0.06em 0.42em !important;
+  margin: 0 2px;
+  font-size: 0.87em !important;
   line-height: 1.35 !important;
   vertical-align: baseline;
 }
@@ -386,6 +430,8 @@ pub const THEME_DEFAULT_CSS: &str = r#"/* Theme: Modern (モダン・サンセ�
 .lecture-render-root td { background-color: #ffffff !important; color: #17202a !important; }
 .lecture-render-root code:not(pre code) { background-color: #e2e8f0 !important; color: #0f172a !important; }
 .lecture-render-root .mermaid-container { background-color: #ffffff !important; color: #0f172a !important; }
+.lecture-render-root .course-badge { background-color: #eff6ff !important; color: #1d4ed8 !important; border-color: #bfdbfe !important; }
+.lecture-render-root .lecture-doc-description { background-color: #f8fafc !important; border-left-color: #2563eb !important; color: #334155 !important; }
 "#;
 
 pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグラフ) */
@@ -400,6 +446,12 @@ pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグ�
   border-bottom: 3px double #7c2d12 !important;
   text-align: center;
 }
+.lecture-render-root .course-badge {
+  background-color: #f5f2eb !important;
+  color: #7c2d12 !important;
+  border: 1px solid #d6d3cd !important;
+  border-radius: 3px !important;
+}
 .lecture-render-root .lecture-doc-title {
   color: #431407 !important;
   letter-spacing: 0.03em;
@@ -407,6 +459,15 @@ pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグ�
 .lecture-render-root .lecture-doc-meta {
   justify-content: center;
   color: #57534e !important;
+}
+.lecture-render-root .lecture-doc-description {
+  text-align: left;
+  background-color: #f5f2eb !important;
+  border-left: 3px solid #7c2d12 !important;
+  color: #292524 !important;
+}
+.lecture-render-root .description-label {
+  color: #7c2d12 !important;
 }
 .lecture-render-root h1 {
   color: #7c2d12 !important;
@@ -492,6 +553,22 @@ pub const THEME_CHALKBOARD_CSS: &str = r#"/* Theme: Chalkboard (黒板・チョ�
   background-color: #f8fafc !important;
   color: #0f172a !important;
 }
+.lecture-render-root .course-badge {
+  background-color: rgba(254, 240, 138, 0.16) !important;
+  color: #fef08a !important;
+  border-color: rgba(254, 240, 138, 0.45) !important;
+}
+.lecture-render-root .lecture-doc-description {
+  background-color: rgba(0, 0, 0, 0.22) !important;
+  border-left-color: #7dd3fc !important;
+  color: #f3f6f4 !important;
+}
+.lecture-render-root .description-label {
+  color: #7dd3fc !important;
+}
+.lecture-render-root .description-text {
+  color: #f3f6f4 !important;
+}
 "#;
 
 pub const THEME_MIDNIGHT_CSS: &str = r#"/* Theme: Midnight (ダーク・プロジェクター) */
@@ -503,6 +580,22 @@ pub const THEME_MIDNIGHT_CSS: &str = r#"/* Theme: Midnight (ダーク・プロ�
 }
 .lecture-render-root .lecture-doc-header {
   border-bottom: 2px solid #38bdf8 !important;
+}
+.lecture-render-root .course-badge {
+  background-color: #1e293b !important;
+  color: #38bdf8 !important;
+  border-color: #0284c7 !important;
+}
+.lecture-render-root .lecture-doc-description {
+  background-color: #1e293b !important;
+  border-left-color: #38bdf8 !important;
+  color: #e2e8f0 !important;
+}
+.lecture-render-root .description-label {
+  color: #38bdf8 !important;
+}
+.lecture-render-root .description-text {
+  color: #e2e8f0 !important;
 }
 .lecture-render-root .lecture-doc-title,
 .lecture-render-root h1 {
