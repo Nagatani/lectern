@@ -903,16 +903,27 @@ function bindEvents(): void {
     void handleThemeEditorModalClose();
   });
 
-  // Workspace controls
+  // Workspace controls (OS native directory picker dialog)
   btnOpenFolder.addEventListener("click", async () => {
-    const newPath = await promptModal(
-      "講義フォルダ（ワークスペース）の変更",
-      "開きたいディレクトリの絶対パスを入力してください:",
-      state.workspacePath
-    );
-    if (newPath) {
-      state.currentFilePath = "";
-      await loadWorkspace(newPath);
+    try {
+      const selectedPath = await invoke<string | null>("pick_workspace_folder", {
+        currentPath: state.workspacePath || null,
+      });
+      if (selectedPath) {
+        state.currentFilePath = "";
+        await loadWorkspace(selectedPath);
+      }
+    } catch (err) {
+      // Fallback to text prompt if native dialog fails
+      const newPath = await promptModal(
+        "講義フォルダ（ワークスペース）の変更",
+        "開きたいディレクトリの絶対パスを入力してください:",
+        state.workspacePath
+      );
+      if (newPath) {
+        state.currentFilePath = "";
+        await loadWorkspace(newPath);
+      }
     }
   });
 

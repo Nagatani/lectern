@@ -29,6 +29,21 @@ fn get_default_workspace() -> String {
 }
 
 #[tauri::command]
+async fn pick_workspace_folder(current_path: Option<String>) -> Option<String> {
+    let mut dialog = rfd::AsyncFileDialog::new().set_title("講義フォルダ（ワークスペース）を選択");
+    if let Some(p) = current_path.filter(|s| !s.trim().is_empty()) {
+        let dir = Path::new(&p);
+        if dir.exists() && dir.is_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+    }
+    dialog
+        .pick_folder()
+        .await
+        .map(|handle| handle.path().to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn list_workspace_files(workspace_path: String) -> Result<Vec<FileEntry>, String> {
     list_markdown_workspace(Path::new(&workspace_path))
 }
@@ -183,6 +198,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_default_workspace,
+            pick_workspace_folder,
             list_workspace_files,
             read_markdown_file,
             save_markdown_file,
