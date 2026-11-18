@@ -13,6 +13,7 @@
     </script>
     <title>Lectern — 講義資料作成・変換ツール</title>
     <link rel="stylesheet" href="/src/styles.css" />
+    <style id="preview-theme-style"></style>
   </head>
   <body>
     <div id="app" class="app-shell">
@@ -57,13 +58,22 @@
         </div>
 
         <div class="toolbar-right">
+          <div class="theme-picker-group" role="group" aria-label="資料CSSテーマ切替">
+            <select id="select-lecture-theme" class="theme-select" aria-label="資料テーマ選択" title="プレビューとHTML/PDF出力のCSSテーマを切り替え">
+              <option value="handout">🎨 Handout (講義レジュメ・明朝)</option>
+            </select>
+            <button type="button" id="btn-edit-theme" class="btn btn-secondary" title="カスタムCSSテーマを編集・新規保存">
+              🎨 CSS編集
+            </button>
+          </div>
+
           <button type="button" id="btn-export-html" class="btn btn-primary" title="スタンドアロンHTMLとして出力">
             🌐 HTML出力
           </button>
           <button type="button" id="btn-export-pdf" class="btn btn-accent" title="高品質PDFとして出力">
             📑 PDF出力
           </button>
-          <button type="button" id="btn-theme-toggle" class="btn btn-icon" aria-label="テーマ切替" title="ライト/ダークモード切替">
+          <button type="button" id="btn-theme-toggle" class="btn btn-icon" aria-label="アプリUIテーマ切替" title="アプリ画面のライト/ダークモード切替">
             🌓
           </button>
           <button type="button" id="btn-help" class="btn btn-icon" aria-label="記法ヘルプ" title="講義Markdown記法ガイド">
@@ -124,7 +134,7 @@
             <span id="compile-time" class="pane-meta">Rust Engine Ready</span>
           </div>
           <div id="preview-viewport" class="preview-viewport mode-document">
-            <article id="preview-content" class="lecture-render-root"></article>
+            <article id="preview-content" class="lecture-render-root" data-lecture-theme="default"></article>
           </div>
         </section>
       </main>
@@ -133,6 +143,7 @@
       <footer class="statusbar">
         <div id="status-message" class="status-message">準備完了</div>
         <div class="status-right">
+          <span id="active-theme-indicator">Theme: default</span>
           <span>Engine: Rust (pulldown-cmark + syntect)</span>
           <span>Math: KaTeX</span>
           <span>Diagrams: Mermaid</span>
@@ -149,6 +160,44 @@
         <div class="dialog-actions">
           <button type="submit" value="cancel" class="btn btn-secondary">キャンセル</button>
           <button type="submit" value="ok" class="btn btn-primary">決定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Modal Dialog: Custom CSS Theme Editor -->
+    <dialog id="modal-theme-editor" closedby="any" aria-labelledby="modal-theme-title">
+      <form method="dialog" class="dialog-form dialog-wide">
+        <h2 id="modal-theme-title" class="dialog-title">🎨 カスタムCSS テーマ編集・保存</h2>
+        <p class="dialog-desc">
+          プレビュー・HTML出力・PDF出力に共通適用されるCSSを編集できます。<code>themes/&lt;テーマID&gt;.css</code> として保存すると、いつでもドロップダウンやフロントマター (<code>theme: テーマID</code>) から呼び出せます。
+        </p>
+        <div class="theme-editor-row">
+          <div class="dialog-field" style="flex: 1;">
+            <label for="theme-id-input">保存するテーマID (例: <code>my-custom-theme</code> → <code>themes/my-custom-theme.css</code>):</label>
+            <input type="text" id="theme-id-input" class="dialog-input" placeholder="sunset-warm" autofocus />
+          </div>
+          <label class="checkbox-label">
+            <input type="checkbox" id="theme-sync-frontmatter" checked />
+            現在のMarkdown先頭 (<code>theme: ...</code>) にも書き込む
+          </label>
+        </div>
+        <div class="dialog-field">
+          <label for="theme-css-textarea">テーマ CSS (<code>.lecture-render-root</code> や <code>.lecture-slide</code> などを対象に記述):</label>
+          <textarea
+            id="theme-css-textarea"
+            class="theme-css-textarea"
+            spellcheck="false"
+            rows="14"
+          ></textarea>
+        </div>
+        <div class="dialog-actions">
+          <button type="submit" value="cancel" class="btn btn-secondary">閉じる</button>
+          <button type="submit" value="apply-only" class="btn btn-secondary" title="ファイル保存せず現在のプレビュー・出力に一時適用">
+            一時適用のみ
+          </button>
+          <button type="submit" value="save-theme" class="btn btn-primary" title="themes/ フォルダに .css ファイルとして保存し適用">
+            💾 themesフォルダに保存して適用
+          </button>
         </div>
       </form>
     </dialog>
@@ -174,11 +223,12 @@
         <h2 id="modal-help-title" class="dialog-title">📖 Lectern 講義資料記法ガイド</h2>
         <div class="help-grid">
           <div class="help-card">
-            <h3>1. フロントマター (先頭メタデータ)</h3>
+            <h3>1. フロントマター &amp; テーマ指定</h3>
             <pre><code>---
 title: アルゴリズムとデータ構造 第1回
 author: 情報工学専攻 講義資料
 date: 2026-11-17
+theme: academic
 ---</code></pre>
           </div>
           <div class="help-card">
@@ -212,8 +262,8 @@ $$</code></pre>
           </div>
           <div class="help-card">
             <h3>6. CLI (コマンドライン) からの一括変換</h3>
-            <p>GUIだけでなくターミナルからも直接HTML/PDF変換が可能です：</p>
-            <pre><code>cargo run -- --cli sample.md --mode slide --output slide.pdf</code></pre>
+            <p>GUIだけでなくターミナルからもテーマ指定付きでHTML/PDF変換が可能です：</p>
+            <pre><code>cargo run -- --cli sample.md --mode slide --theme academic --output slide.pdf</code></pre>
           </div>
         </div>
         <div class="dialog-actions">

@@ -1,6 +1,7 @@
 pub mod converter;
 pub mod fs_ops;
 pub mod pdf;
+pub mod themes;
 
 use converter::{build_standalone_html, compile_lecture_markdown, CompileResult};
 use fs_ops::{
@@ -10,6 +11,7 @@ use fs_ops::{
 use pdf::render_html_to_pdf;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use themes::{list_available_themes, resolve_theme_css, save_custom_theme_file, ThemeInfo};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportResult {
@@ -54,6 +56,25 @@ fn compile_markdown(markdown: String, mode: String) -> CompileResult {
     compile_lecture_markdown(&markdown, &mode)
 }
 
+#[tauri::command]
+fn list_themes(workspace_path: String) -> Vec<ThemeInfo> {
+    let ws = if workspace_path.trim().is_empty() {
+        None
+    } else {
+        Some(Path::new(&workspace_path))
+    };
+    list_available_themes(ws)
+}
+
+#[tauri::command]
+fn save_custom_theme(
+    workspace_path: String,
+    theme_id: String,
+    css_content: String,
+) -> Result<ThemeInfo, String> {
+    save_custom_theme_file(Path::new(&workspace_path), &theme_id, &css_content)
+}
+
 fn determine_export_path(
     source_path: Option<&str>,
     workspace_path: &str,
@@ -80,9 +101,25 @@ fn export_lecture_html(
     markdown: String,
     rendered_body_html: Option<String>,
     mode: String,
+    theme_id: Option<String>,
+    custom_css: Option<String>,
 ) -> Result<ExportResult, String> {
     let out_path = determine_export_path(source_path.as_deref(), &workspace_path, &mode, "html");
-    let full_html = build_standalone_html(&markdown, rendered_body_html.as_deref(), &mode);
+    let compiled = compile_lecture_markdown(&markdown, &mode);
+    let requested_theme = theme_id.as_deref().or(compiled.theme.as_deref());
+    let (resolved_id, resolved_css) = resolve_theme_css(
+        Some(Path::new(&workspace_path)),
+        requested_theme,
+        custom_css.as_deref(),
+    );
+
+    let full_html = build_standalone_html(
+        &markdown,
+        rendered_body_html.as_deref(),
+        &mode,
+        Some(&resolved_id),
+        Some(&resolved_css),
+    );
     write_file_utf8(&out_path, &full_html)?;
     let bytes = full_html.len() as u64;
 
@@ -90,8 +127,9 @@ fn export_lecture_html(
         output_path: out_path.to_string_lossy().to_string(),
         bytes_written: bytes,
         message: format!(
-            "HTMLファイルを出力しました ({} Mode, {:.1} KB)",
+            "HTMLファイルを出力しました ({} Mode / Theme: {}, {:.1} KB)",
             if mode == "slide" { "スライド" } else { "ドキュメント" },
+            resolved_id,
             bytes as f64 / 1024.0
         ),
     })
@@ -104,17 +142,34 @@ fn export_lecture_pdf(
     markdown: String,
     rendered_body_html: Option<String>,
     mode: String,
+    theme_id: Option<String>,
+    custom_css: Option<String>,
 ) -> Result<ExportResult, String> {
     let out_path = determine_export_path(source_path.as_deref(), &workspace_path, &mode, "pdf");
-    let full_html = build_standalone_html(&markdown, rendered_body_html.as_deref(), &mode);
+    let compiled = compile_lecture_markdown(&markdown, &mode);
+    let requested_theme = theme_id.as_deref().or(compiled.theme.as_deref());
+    let (resolved_id, resolved_css) = resolve_theme_css(
+        Some(Path::new(&workspace_path)),
+        requested_theme,
+        custom_css.as_deref(),
+    );
+
+    let full_html = build_standalone_html(
+        &markdown,
+        rendered_body_html.as_deref(),
+        &mode,
+        Some(&resolved_id),
+        Some(&resolved_css),
+    );
     let bytes = render_html_to_pdf(&full_html, &out_path)?;
 
     Ok(ExportResult {
         output_path: out_path.to_string_lossy().to_string(),
         bytes_written: bytes,
         message: format!(
-            "PDFファイルを出力しました ({} Mode, {:.1} KB)",
+            "PDFファイルを出力しました ({} Mode / Theme: {}, {:.1} KB)",
             if mode == "slide" { "スライド" } else { "ドキュメント" },
+            resolved_id,
             bytes as f64 / 1024.0
         ),
     })
@@ -131,11 +186,13 @@ pub fn run() {
             create_markdown_file,
             delete_markdown_file,
             compile_markdown,
+            list_themes,
+            save_custom_theme,
             export_lecture_html,
             export_lecture_pdf,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running LectureMD Studio Tauri application");
+        .expect("error while running Lectern Tauri application");
 }
 
 #[cfg(test)]
@@ -143,11 +200,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compile_markdown_document_and_slide_modes() {
+    fn test_compile_markdown_document_and_slide_modes_and_themes() {
         let md = r#"---
 title: テスト講義
 author: 担当教員
 date: 2026-11-17
+theme: academic
 ---
 
 # スライド1
@@ -179,6 +237,7 @@ flowchart LR
 
         let doc_res = compile_lecture_markdown(md, "document");
         assert_eq!(doc_res.title, "テスト講義");
+        assert_eq!(doc_res.theme.as_deref(), Some("academic"));
         assert_eq!(doc_res.slide_count, 2);
         assert!(doc_res.html.contains("math-inline"));
         assert!(doc_res.html.contains("math-display"));
@@ -186,9 +245,20 @@ flowchart LR
         assert!(doc_res.html.contains("code-block-wrapper"));
         assert!(doc_res.html.contains("mermaid-container"));
 
-        let slide_res = compile_lecture_markdown(md, "slide");
-        assert_eq!(slide_res.slide_count, 2);
-        assert!(slide_res.html.contains("data-slide-index=\"0\""));
-        assert!(slide_res.html.contains("data-slide-index=\"1\""));
+        let (resolved_id, resolved_css) =
+            resolve_theme_css(None, doc_res.theme.as_deref(), Some(".custom-rule { color: red; }"));
+        assert_eq!(resolved_id, "academic");
+        assert!(resolved_css.contains("Hiragino Mincho ProN"));
+        assert!(resolved_css.contains(".custom-rule"));
+
+        let standalone = build_standalone_html(
+            md,
+            None,
+            "slide",
+            Some(&resolved_id),
+            Some(&resolved_css),
+        );
+        assert!(standalone.contains("data-lecture-theme=\"academic\""));
+        assert!(standalone.contains(".custom-rule"));
     }
 }

@@ -20,7 +20,16 @@ interface CompileResult {
   title: string;
   author: string;
   date: string;
+  theme: string | null;
   elapsed_ms: number;
+}
+
+interface ThemeInfo {
+  id: string;
+  name: string;
+  css: string;
+  is_builtin: boolean;
+  file_path: string | null;
 }
 
 interface ExportResult {
@@ -45,6 +54,9 @@ const state = {
   totalSlides: 1,
   slideSingleView: true, // true: 1枚ずつ表示, false: 一覧表示
   lastCompileResult: null as CompileResult | null,
+  themes: [] as ThemeInfo[],
+  currentThemeId: "handout",
+  inlineCustomCss: "",
 };
 
 // ============================================================================
@@ -63,6 +75,8 @@ const elWorkspacePathLabel = document.getElementById("workspace-path-label") as 
 const elCurrentFileIndicator = document.getElementById("current-file-indicator") as HTMLSpanElement;
 const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLSpanElement;
 const elStatusMessage = document.getElementById("status-message") as HTMLDivElement;
+const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLSpanElement;
+const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HTMLStyleElement;
 
 const btnOpenFolder = document.getElementById("btn-open-folder") as HTMLButtonElement;
 const btnNewFile = document.getElementById("btn-new-file") as HTMLButtonElement;
@@ -75,6 +89,10 @@ const btnPrevSlide = document.getElementById("btn-prev-slide") as HTMLButtonElem
 const btnNextSlide = document.getElementById("btn-next-slide") as HTMLButtonElement;
 const elSlideCounter = document.getElementById("slide-counter") as HTMLSpanElement;
 const btnSlideViewMode = document.getElementById("btn-slide-view-mode") as HTMLButtonElement;
+
+const selectLectureTheme = document.getElementById("select-lecture-theme") as HTMLSelectElement;
+const btnEditTheme = document.getElementById("btn-edit-theme") as HTMLButtonElement;
+
 const btnExportHtml = document.getElementById("btn-export-html") as HTMLButtonElement;
 const btnExportPdf = document.getElementById("btn-export-pdf") as HTMLButtonElement;
 const btnThemeToggle = document.getElementById("btn-theme-toggle") as HTMLButtonElement;
@@ -85,6 +103,11 @@ const modalPrompt = document.getElementById("modal-prompt") as HTMLDialogElement
 const modalPromptTitle = document.getElementById("modal-prompt-title") as HTMLHeadingElement;
 const modalPromptDesc = document.getElementById("modal-prompt-desc") as HTMLParagraphElement;
 const modalPromptInput = document.getElementById("modal-prompt-input") as HTMLInputElement;
+
+const modalThemeEditor = document.getElementById("modal-theme-editor") as HTMLDialogElement;
+const inputThemeId = document.getElementById("theme-id-input") as HTMLInputElement;
+const checkboxSyncFrontmatter = document.getElementById("theme-sync-frontmatter") as HTMLInputElement;
+const textareaThemeCss = document.getElementById("theme-css-textarea") as HTMLTextAreaElement;
 
 const modalExport = document.getElementById("modal-export") as HTMLDialogElement;
 const modalExportTitle = document.getElementById("modal-export-title") as HTMLHeadingElement;
@@ -182,7 +205,150 @@ function toggleColorScheme(): void {
     meta.content = "light dark";
   }
 
-  setStatus(`テーマを ${targetScheme === "dark" ? "ダーク" : "ライト"} モードに切り替えました`);
+  setStatus(`アプリUIを ${targetScheme === "dark" ? "ダーク" : "ライト"} モードに切り替えました`);
+}
+
+// ============================================================================
+// Lecture CSS Theme Management (Presets + themes/*.css + Frontmatter Sync)
+// ============================================================================
+
+async function loadThemes(): Promise<void> {
+  try {
+    const themes = await invoke<ThemeInfo[]>("list_themes", {
+      workspacePath: state.workspacePath,
+    });
+    state.themes = themes;
+    renderThemeSelector();
+    applyLectureThemeToPreview(state.currentThemeId);
+  } catch (err) {
+    console.warn("Failed to load themes:", err);
+  }
+}
+
+function renderThemeSelector(): void {
+  selectLectureTheme.innerHTML = "";
+  for (const t of state.themes) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.is_builtin ? `🎨 ${t.name}` : `✨ ${t.name}`;
+    if (t.id === state.currentThemeId) {
+      opt.selected = true;
+    }
+    selectLectureTheme.appendChild(opt);
+  }
+}
+
+function applyLectureThemeToPreview(themeId: string): void {
+  const cleanId = themeId.trim().replace(/\.css$/i, "") || "default";
+  const found =
+    state.themes.find((t) => t.id.toLowerCase() === cleanId.toLowerCase()) ??
+    state.themes[0];
+
+  const resolvedId = found ? found.id : "default";
+  const baseCss = found ? found.css : "";
+
+  state.currentThemeId = resolvedId;
+  if (selectLectureTheme.value !== resolvedId) {
+    selectLectureTheme.value = resolvedId;
+  }
+
+  const combinedCss = state.inlineCustomCss
+    ? `${baseCss}\n/* Inline Custom CSS Override */\n${state.inlineCustomCss}`
+    : baseCss;
+
+  elPreviewThemeStyle.textContent = combinedCss;
+  elPreviewContent.setAttribute("data-lecture-theme", resolvedId);
+  elActiveThemeIndicator.textContent = `Theme: ${resolvedId}`;
+}
+
+/**
+ * Markdown先頭のフロントマター (`--- ... ---`) 内の `theme: xxx` を更新・追加する
+ */
+function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boolean): void {
+  const raw = elEditor.value.replace(/\r\n/g, "\n");
+  if (!raw.startsWith("---\n")) {
+    if (!insertIfMissing) return;
+    elEditor.value = `---\ntheme: ${newThemeId}\n---\n\n${raw}`;
+    markDirty(true);
+    updateLineNumbersAndStats();
+    return;
+  }
+
+  const endIdx = raw.indexOf("\n---\n", 4);
+  if (endIdx === -1) return;
+
+  const yamlPart = raw.substring(4, endIdx);
+  const restPart = raw.substring(endIdx + 5);
+  const lines = yamlPart.split("\n");
+
+  let foundThemeLine = false;
+  const updatedLines = lines.map((line) => {
+    if (/^\s*theme\s*:/i.test(line)) {
+      foundThemeLine = true;
+      return `theme: ${newThemeId}`;
+    }
+    return line;
+  });
+
+  if (!foundThemeLine) {
+    if (!insertIfMissing) return;
+    updatedLines.push(`theme: ${newThemeId}`);
+  }
+
+  const nextValue = `---\n${updatedLines.join("\n")}\n---\n${restPart}`;
+  if (nextValue !== raw) {
+    elEditor.value = nextValue;
+    markDirty(true);
+    updateLineNumbersAndStats();
+  }
+}
+
+function openCustomThemeEditorModal(): void {
+  const current =
+    state.themes.find((t) => t.id === state.currentThemeId) ?? state.themes[0];
+  if (current) {
+    inputThemeId.value = current.is_builtin ? `${current.id}-custom` : current.id;
+    textareaThemeCss.value = state.inlineCustomCss || current.css;
+  }
+  modalThemeEditor.returnValue = "";
+  modalThemeEditor.showModal();
+  textareaThemeCss.focus();
+}
+
+async function handleThemeEditorModalClose(): Promise<void> {
+  const action = modalThemeEditor.returnValue;
+  modalThemeEditor.returnValue = "";
+  if (!action || action === "cancel") return;
+
+  const customCssText = textareaThemeCss.value;
+  const targetId = inputThemeId.value.trim().replace(/\.css$/i, "") || "custom-theme";
+
+  if (action === "apply-only") {
+    state.inlineCustomCss = customCssText;
+    applyLectureThemeToPreview(state.currentThemeId);
+    setStatus("カスタムCSSを現在のプレビューと出力に一時適用しました");
+    return;
+  }
+
+  if (action === "save-theme") {
+    try {
+      const saved = await invoke<ThemeInfo>("save_custom_theme", {
+        workspacePath: state.workspacePath,
+        themeId: targetId,
+        cssContent: customCssText,
+      });
+      state.inlineCustomCss = "";
+      state.currentThemeId = saved.id;
+      await loadThemes();
+
+      if (checkboxSyncFrontmatter.checked) {
+        updateMarkdownFrontmatterTheme(saved.id, true);
+      }
+      setStatus(`カスタムテーマ themes/${saved.id}.css を保存し適用しました`);
+    } catch (err) {
+      setStatus(`カスタムテーマ保存エラー: ${String(err)}`);
+    }
+  }
 }
 
 // ============================================================================
@@ -301,6 +467,17 @@ async function compileCurrentMarkdown(): Promise<void> {
       state.currentSlideIndex = state.totalSlides - 1;
     }
 
+    // フロントマターに `theme: xxx` が記述されていれば自動連動
+    if (res.theme) {
+      const cleanFrontTheme = res.theme.trim().replace(/\.css$/i, "");
+      const matched = state.themes.find(
+        (t) => t.id.toLowerCase() === cleanFrontTheme.toLowerCase()
+      );
+      if (matched && matched.id !== state.currentThemeId) {
+        applyLectureThemeToPreview(matched.id);
+      }
+    }
+
     elPreviewContent.innerHTML = res.html;
     elCompileTime.textContent = `Rust Engine: ${res.elapsed_ms} ms`;
 
@@ -364,6 +541,7 @@ async function loadWorkspace(workspacePath: string): Promise<void> {
     elWorkspacePathLabel.textContent = workspacePath;
     elWorkspacePathLabel.title = workspacePath;
 
+    await loadThemes();
     renderFileTree(entries);
     setStatus(`ワークスペースを読み込みました (${entries.length} 項目)`);
 
@@ -525,7 +703,7 @@ async function exportHtmlFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
-  setStatus("HTMLファイルを生成しています...");
+  setStatus(`HTMLファイルを生成しています (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
     const res = await invoke<ExportResult>("export_lecture_html", {
@@ -534,6 +712,8 @@ async function exportHtmlFlow(): Promise<void> {
       markdown: elEditor.value,
       renderedBodyHtml,
       mode: state.mode,
+      themeId: state.currentThemeId,
+      customCss: state.inlineCustomCss || null,
     });
     setStatus(res.message);
     showExportModal("🌐 HTML出力完了", res.message, res.output_path);
@@ -546,7 +726,7 @@ async function exportPdfFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
-  setStatus("ブラウザ印刷エンジンでPDFを生成しています...");
+  setStatus(`ブラウザ印刷エンジンでPDFを生成しています (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
     const res = await invoke<ExportResult>("export_lecture_pdf", {
@@ -555,6 +735,8 @@ async function exportPdfFlow(): Promise<void> {
       markdown: elEditor.value,
       renderedBodyHtml,
       mode: state.mode,
+      themeId: state.currentThemeId,
+      customCss: state.inlineCustomCss || null,
     });
     setStatus(res.message);
     showExportModal("📑 PDF出力完了", res.message, res.output_path);
@@ -659,6 +841,24 @@ function bindEvents(): void {
     updateSlideVisibility();
   });
 
+  // Lecture CSS Theme selector & custom CSS editor
+  selectLectureTheme.addEventListener("change", () => {
+    const selectedId = selectLectureTheme.value;
+    state.inlineCustomCss = "";
+    applyLectureThemeToPreview(selectedId);
+    // フロントマターに既に `theme:` がある場合は自動で書き換え同期する
+    updateMarkdownFrontmatterTheme(selectedId, false);
+    setStatus(`資料テーマを「${selectedId}」に切り替えました`);
+  });
+
+  btnEditTheme.addEventListener("click", () => {
+    openCustomThemeEditorModal();
+  });
+
+  modalThemeEditor.addEventListener("close", () => {
+    void handleThemeEditorModalClose();
+  });
+
   // Workspace controls
   btnOpenFolder.addEventListener("click", async () => {
     const newPath = await promptModal(
@@ -680,7 +880,7 @@ function bindEvents(): void {
   btnExportHtml.addEventListener("click", () => void exportHtmlFlow());
   btnExportPdf.addEventListener("click", () => void exportPdfFlow());
 
-  // Theme & Help
+  // App UI Theme & Help
   btnThemeToggle.addEventListener("click", toggleColorScheme);
   btnHelp.addEventListener("click", () => {
     modalHelp.returnValue = "";

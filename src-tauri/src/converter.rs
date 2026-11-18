@@ -12,14 +12,51 @@ pub struct CompileResult {
     pub title: String,
     pub author: String,
     pub date: String,
+    pub theme: Option<String>,
     pub elapsed_ms: u128,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct FrontMatter {
     pub title: String,
+    pub subtitle: String,
     pub author: String,
     pub date: String,
+    pub theme: Option<String>,
+}
+
+fn build_doc_header_html(meta: &FrontMatter) -> String {
+    if meta.title.is_empty() && meta.subtitle.is_empty() && meta.author.is_empty() && meta.date.is_empty() {
+        return String::new();
+    }
+    let title_html = if !meta.title.is_empty() {
+        format!(r#"<h1 class="lecture-doc-title title">{}</h1>"#, escape_html(&meta.title))
+    } else {
+        String::new()
+    };
+    let subtitle_html = if !meta.subtitle.is_empty() {
+        format!(r#"<h1 class="lecture-doc-subtitle subtitle">{}</h1>"#, escape_html(&meta.subtitle))
+    } else {
+        String::new()
+    };
+    let author_html = if !meta.author.is_empty() {
+        format!(r#"<span class="lecture-doc-author author">{}</span>"#, escape_html(&meta.author))
+    } else {
+        String::new()
+    };
+    let date_html = if !meta.date.is_empty() {
+        format!(r#"<span class="lecture-doc-date date">{}</span>"#, escape_html(&meta.date))
+    } else {
+        String::new()
+    };
+
+    let meta_block = if !author_html.is_empty() || !date_html.is_empty() {
+        format!(r#"<div class="lecture-doc-meta">{}{}</div>"#, author_html, date_html)
+    } else {
+        String::new()
+    };
+
+    format!(r#"<header class="lecture-doc-header">{}{}{}</header>"#, title_html, subtitle_html, meta_block)
 }
 
 /// マークダウン文字列を解析し、指定されたモード ("document" | "slide") に応じたHTMLを生成する
@@ -33,20 +70,23 @@ pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
 
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
+    let is_light_code_theme = matches!(
+        meta.theme.as_deref(),
+        None | Some("handout") | Some("academic")
+    );
+    let theme = if is_light_code_theme {
+        &ts.themes["InspiredGitHub"]
+    } else {
+        &ts.themes["base16-ocean.dark"]
+    };
 
     let mut final_html = String::new();
 
     if mode == "slide" {
         for (idx, slide_md) in raw_slides.iter().enumerate() {
             let slide_inner = render_markdown_chunk(slide_md, &ss, theme);
-            let title_header = if idx == 0 && !meta.title.is_empty() {
-                format!(
-                    r#"<div class="lecture-doc-header"><div class="lecture-doc-title">{}</div><div class="lecture-doc-meta"><span>{}</span><span>{}</span></div></div>"#,
-                    escape_html(&meta.title),
-                    escape_html(&meta.author),
-                    escape_html(&meta.date)
-                )
+            let title_header = if idx == 0 {
+                build_doc_header_html(&meta)
             } else {
                 String::new()
             };
@@ -63,14 +103,7 @@ pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
         }
     } else {
         // Document (A4 Handout) Mode
-        if !meta.title.is_empty() || !meta.author.is_empty() || !meta.date.is_empty() {
-            final_html.push_str(&format!(
-                r#"<header class="lecture-doc-header"><h1 class="lecture-doc-title">{}</h1><div class="lecture-doc-meta"><span>{}</span><span>{}</span></div></header>"#,
-                escape_html(if meta.title.is_empty() { "講義資料" } else { &meta.title }),
-                escape_html(&meta.author),
-                escape_html(&meta.date)
-            ));
-        }
+        final_html.push_str(&build_doc_header_html(&meta));
         let doc_inner = render_markdown_chunk(&preprocessed, &ss, theme);
         final_html.push_str(&doc_inner);
     }
@@ -83,6 +116,7 @@ pub fn compile_lecture_markdown(markdown: &str, mode: &str) -> CompileResult {
         title: meta.title,
         author: meta.author,
         date: meta.date,
+        theme: meta.theme,
         elapsed_ms,
     }
 }
@@ -104,8 +138,14 @@ fn parse_frontmatter(input: &str) -> (FrontMatter, String) {
                 let val = v.trim().trim_matches(['"', '\'']).to_string();
                 match key.as_str() {
                     "title" => meta.title = val,
+                    "subtitle" => meta.subtitle = val,
                     "author" => meta.author = val,
                     "date" => meta.date = val,
+                    "theme" => {
+                        if !val.is_empty() {
+                            meta.theme = Some(val);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -294,11 +334,20 @@ pub fn build_standalone_html(
     markdown: &str,
     rendered_body_html: Option<&str>,
     mode: &str,
+    theme_id: Option<&str>,
+    theme_css: Option<&str>,
 ) -> String {
     let compiled = compile_lecture_markdown(markdown, mode);
     let body_content = rendered_body_html
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(&compiled.html);
+
+    let effective_theme_id = theme_id
+        .filter(|s| !s.trim().is_empty())
+        .or(compiled.theme.as_deref())
+        .unwrap_or("handout");
+
+    let custom_theme_style = theme_css.unwrap_or("");
 
     let title = if compiled.title.is_empty() {
         "Lectern 講義資料"
@@ -512,9 +561,12 @@ pub fn build_standalone_html(
     }}
     {page_css}
   </style>
+  <style id="lectern-theme-css">
+{custom_theme_style}
+  </style>
 </head>
-<body class="mode-{mode}">
-  <article class="lecture-render-root">
+<body class="mode-{mode} theme-{theme_id}" data-lecture-theme="{theme_id}">
+  <article class="lecture-render-root" data-lecture-theme="{theme_id}">
     {body_content}
   </article>
   <script>
@@ -552,7 +604,9 @@ pub fn build_standalone_html(
         title = escape_html(title),
         katex_css_tag = katex_css_tag,
         page_css = page_css,
+        custom_theme_style = custom_theme_style,
         mode = escape_html(mode),
+        theme_id = escape_html(effective_theme_id),
         body_content = body_content
     )
 }

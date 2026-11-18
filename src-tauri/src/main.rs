@@ -1,15 +1,16 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use lectern_lib::converter::build_standalone_html;
+use lectern_lib::converter::{build_standalone_html, compile_lecture_markdown};
 use lectern_lib::fs_ops::{read_file_utf8, write_file_utf8};
 use lectern_lib::pdf::render_html_to_pdf;
+use lectern_lib::themes::resolve_theme_css;
 use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // CLI Mode: `cargo run -- --cli <input.md> [--mode document|slide] [--output <out.html|out.pdf>]`
+    // CLI Mode: `cargo run -- --cli <input.md> [--mode document|slide] [--theme <id_or_css_path>] [--output <out.html|out.pdf>]`
     if let Some(cli_idx) = args.iter().position(|a| a == "--cli") {
         if let Err(e) = run_cli(&args[cli_idx + 1..]) {
             eprintln!("CLI Error: {}", e);
@@ -25,13 +26,14 @@ fn main() {
 fn run_cli(cli_args: &[String]) -> Result<(), String> {
     if cli_args.is_empty() {
         return Err(
-            "使用法: --cli <input.md> [--mode document|slide] [--output <out.html|out.pdf>]"
+            "使用法: --cli <input.md> [--mode document|slide] [--theme <theme_id_or_css>] [--output <out.html|out.pdf>]"
                 .to_string(),
         );
     }
 
     let input_path = PathBuf::from(&cli_args[0]);
     let mut mode = "document".to_string();
+    let mut cli_theme: Option<String> = None;
     let mut output_path: Option<PathBuf> = None;
 
     let mut i = 1;
@@ -43,6 +45,14 @@ fn run_cli(cli_args: &[String]) -> Result<(), String> {
                     i += 2;
                 } else {
                     return Err("--mode の後に document または slide を指定してください".to_string());
+                }
+            }
+            "--theme" | "-t" => {
+                if i + 1 < cli_args.len() {
+                    cli_theme = Some(cli_args[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--theme の後にテーマ名または .css ファイルパスを指定してください".to_string());
                 }
             }
             "--output" | "-o" => {
@@ -60,7 +70,18 @@ fn run_cli(cli_args: &[String]) -> Result<(), String> {
     }
 
     let md = read_file_utf8(&input_path)?;
-    let full_html = build_standalone_html(&md, None, &mode);
+    let compiled = compile_lecture_markdown(&md, &mode);
+    let ws_dir = input_path.parent();
+    let requested_theme = cli_theme.as_deref().or(compiled.theme.as_deref());
+    let (resolved_id, resolved_css) = resolve_theme_css(ws_dir, requested_theme, None);
+
+    let full_html = build_standalone_html(
+        &md,
+        None,
+        &mode,
+        Some(&resolved_id),
+        Some(&resolved_css),
+    );
 
     let out = output_path.unwrap_or_else(|| {
         let mut p = input_path.clone();
@@ -77,18 +98,20 @@ fn run_cli(cli_args: &[String]) -> Result<(), String> {
     if is_pdf {
         let bytes = render_html_to_pdf(&full_html, &out)?;
         println!(
-            "✅ PDF出力完了: {} ({:.1} KB, mode={})",
+            "✅ PDF出力完了: {} ({:.1} KB, mode={}, theme={})",
             out.display(),
             bytes as f64 / 1024.0,
-            mode
+            mode,
+            resolved_id
         );
     } else {
         write_file_utf8(&out, &full_html)?;
         println!(
-            "✅ HTML出力完了: {} ({:.1} KB, mode={})",
+            "✅ HTML出力完了: {} ({:.1} KB, mode={}, theme={})",
             out.display(),
             full_html.len() as f64 / 1024.0,
-            mode
+            mode,
+            resolved_id
         );
     }
 
