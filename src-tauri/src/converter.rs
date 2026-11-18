@@ -363,7 +363,7 @@ pub fn build_standalone_html(
         .and_then(|css_path| std::fs::read_to_string(css_path).ok())
         .map(|css| format!("<style>{}</style>", css))
         .unwrap_or_else(|| {
-            r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />"#.to_string()
+            r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.css" crossorigin="anonymous" />"#.to_string()
         });
 
     let page_css = if mode == "slide" {
@@ -575,7 +575,7 @@ pub fn build_standalone_html(
       const unrendered = document.querySelectorAll(".math-inline:not(:has(.katex)), .math-display:not(:has(.katex))");
       if (unrendered.length > 0) {{
         const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js";
+        s.src = "https://cdn.jsdelivr.net/npm/katex@0.19.1/dist/katex.min.js";
         s.onload = () => {{
           unrendered.forEach((el) => {{
             const tex = el.getAttribute("data-math") || "";
@@ -588,7 +588,7 @@ pub fn build_standalone_html(
       const unrenderedMermaid = document.querySelectorAll(".mermaid-container:not(:has(svg)) .mermaid");
       if (unrenderedMermaid.length > 0) {{
         const m = document.createElement("script");
-        m.src = "https://cdn.jsdelivr.net/npm/mermaid@11.4.0/dist/mermaid.min.js";
+        m.src = "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.min.js";
         m.onload = () => {{
           if (window.mermaid) {{
             window.mermaid.initialize({{ startOnLoad: false, theme: "default" }});
