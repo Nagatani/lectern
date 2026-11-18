@@ -17,7 +17,8 @@
         "width": 1440,
         "height": 900,
         "minWidth": 960,
-        "minHeight": 640
+        "minHeight": 640,
+        "center": true
       }
     ],
     "security": {
@@ -27,12 +28,25 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Education",
+    "shortDescription": "Lecture Markdown Editor & HTML/PDF Converter",
+    "longDescription": "Lectern is a Rust & Tauri desktop application for authoring lecture materials in Markdown with live preview, custom CSS themes, KaTeX math, Mermaid diagrams, and exporting to standalone HTML and PDF.",
+    "copyright": "Copyright © 2026 Lectern. All rights reserved.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
   }
 }

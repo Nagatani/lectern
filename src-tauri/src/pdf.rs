@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// システムにインストールされている Chromium 系ブラウザ (macOS / Windows / Linux) の実行ファイルパスを検索する
 pub fn detect_chromium_binary() -> Option<PathBuf> {
@@ -60,7 +60,7 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
 
     // 一時HTMLファイルを生成
     let temp_dir = std::env::temp_dir();
-    let temp_html_path = temp_dir.join(format!("lecture_md_export_{}.html", std::process::id()));
+    let temp_html_path = temp_dir.join(format!("lectern_export_{}.html", std::process::id()));
     fs::write(&temp_html_path, html_content)
         .map_err(|e| format!("一時HTMLファイルの書き込みに失敗しました: {}", e))?;
 
@@ -73,13 +73,26 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
         format!("file://{}", temp_html_path.to_string_lossy())
     };
 
-    let status = Command::new(&browser_bin)
-        .arg("--headless")
+    let mut cmd = Command::new(&browser_bin);
+    cmd.arg("--headless")
         .arg("--disable-gpu")
         .arg("--no-pdf-header-footer")
         .arg("--print-to-pdf-no-header")
         .arg(format!("--print-to-pdf={}", output_pdf_path.to_string_lossy()))
         .arg(&file_url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Windows でサブプロセス起動時に黒いコンソール画面 (cmd.exe) が一瞬出るのを防止
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let status = cmd
         .status()
         .map_err(|e| format!("ブラウザ印刷エンジンの起動に失敗しました: {}", e))?;
 
