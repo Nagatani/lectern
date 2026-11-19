@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import katex from "katex";
 import "katex/dist/katex.min.css";
@@ -80,13 +81,11 @@ const elLineNumbers = document.getElementById("line-numbers") as HTMLDivElement;
 const elEditorStats = document.getElementById("editor-stats") as HTMLSpanElement;
 const elPreviewViewport = document.getElementById("preview-viewport") as HTMLDivElement;
 const elPreviewContent = document.getElementById("preview-content") as HTMLElement;
-const elPreviewTitle = document.getElementById("preview-title") as HTMLSpanElement;
 const elCompileTime = document.getElementById("compile-time") as HTMLSpanElement;
 const elFileTree = document.getElementById("file-tree") as HTMLUListElement;
 const elWorkspacePathLabel = document.getElementById("workspace-path-label") as HTMLDivElement;
 const elCurrentFileIndicator = document.getElementById("current-file-indicator") as HTMLSpanElement;
 const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLSpanElement;
-const elStatusMessage = document.getElementById("status-message") as HTMLDivElement;
 const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLSpanElement;
 const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HTMLStyleElement;
 
@@ -99,14 +98,7 @@ const elPanePreview = document.getElementById("pane-preview") as HTMLElement;
 const btnToggleSidebar = document.getElementById("btn-toggle-sidebar") as HTMLButtonElement;
 const btnTogglePreview = document.getElementById("btn-toggle-preview") as HTMLButtonElement;
 const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButtonElement;
-const btnClosePreview = document.getElementById("btn-close-preview") as HTMLButtonElement;
 
-const btnOpenFolder = document.getElementById("btn-open-folder") as HTMLButtonElement;
-const btnRecentWorkspaces = document.getElementById("btn-recent-workspaces") as HTMLButtonElement;
-const elRecentWorkspacesMenu = document.getElementById("recent-workspaces-menu") as HTMLDivElement;
-const elRecentWorkspacesList = document.getElementById("recent-workspaces-list") as HTMLDivElement;
-const btnNewFile = document.getElementById("btn-new-file") as HTMLButtonElement;
-const btnSaveFile = document.getElementById("btn-save-file") as HTMLButtonElement;
 const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
 const btnRevealExplorer = document.getElementById("btn-reveal-explorer") as HTMLButtonElement;
 const btnRefreshTree = document.getElementById("btn-refresh-tree") as HTMLButtonElement;
@@ -119,12 +111,6 @@ const elSlideCounter = document.getElementById("slide-counter") as HTMLSpanEleme
 const btnSlideViewMode = document.getElementById("btn-slide-view-mode") as HTMLButtonElement;
 
 const selectLectureTheme = document.getElementById("select-lecture-theme") as HTMLSelectElement;
-const btnEditTheme = document.getElementById("btn-edit-theme") as HTMLButtonElement;
-
-const btnExportHtml = document.getElementById("btn-export-html") as HTMLButtonElement;
-const btnExportPdf = document.getElementById("btn-export-pdf") as HTMLButtonElement;
-const btnThemeToggle = document.getElementById("btn-theme-toggle") as HTMLButtonElement;
-const btnHelp = document.getElementById("btn-help") as HTMLButtonElement;
 
 // Dialogs
 const modalPrompt = document.getElementById("modal-prompt") as HTMLDialogElement;
@@ -144,6 +130,9 @@ const modalExportPath = document.getElementById("modal-export-path") as HTMLInpu
 const btnRevealExported = document.getElementById("btn-reveal-exported") as HTMLButtonElement;
 
 const modalHelp = document.getElementById("modal-help") as HTMLDialogElement;
+const modalLogs = document.getElementById("modal-logs") as HTMLDialogElement;
+const elActivityLogList = document.getElementById("activity-log-list") as HTMLDivElement;
+const btnClearLogs = document.getElementById("btn-clear-logs") as HTMLButtonElement;
 
 // ============================================================================
 // Modern Web Guidance: <dialog closedby="any"> Fallback & Dark Mode Toggle
@@ -510,8 +499,61 @@ function markDirty(dirty: boolean): void {
   }
 }
 
+interface ActivityLogEntry {
+  time: string;
+  message: string;
+}
+
+const MAX_ACTIVITY_LOGS = 200;
+const activityLogs: ActivityLogEntry[] = [];
+
+function formatCurrentTime(): string {
+  const now = new Date();
+  return now.toLocaleTimeString("ja-JP", { hour12: false });
+}
+
+function renderActivityLogs(): void {
+  elActivityLogList.innerHTML = "";
+  if (activityLogs.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "activity-log-empty";
+    empty.textContent = "ログはまだありません";
+    elActivityLogList.appendChild(empty);
+    return;
+  }
+
+  for (const entry of activityLogs) {
+    const row = document.createElement("div");
+    row.className = "activity-log-entry";
+
+    const timeSpan = document.createElement("span");
+    timeSpan.className = "activity-log-time";
+    timeSpan.textContent = entry.time;
+
+    const msgSpan = document.createElement("span");
+    msgSpan.className = "activity-log-msg";
+    msgSpan.textContent = entry.message;
+
+    row.appendChild(timeSpan);
+    row.appendChild(msgSpan);
+    elActivityLogList.appendChild(row);
+  }
+}
+
+function openActivityLogsModal(): void {
+  renderActivityLogs();
+  modalLogs.returnValue = "";
+  modalLogs.showModal();
+}
+
 function setStatus(msg: string): void {
-  elStatusMessage.textContent = msg;
+  activityLogs.unshift({ time: formatCurrentTime(), message: msg });
+  if (activityLogs.length > MAX_ACTIVITY_LOGS) {
+    activityLogs.length = MAX_ACTIVITY_LOGS;
+  }
+  if (modalLogs.open) {
+    renderActivityLogs();
+  }
 }
 
 let compileTimer: number | null = null;
@@ -563,7 +605,7 @@ async function compileCurrentMarkdown(syncThemeFromFrontmatter = true): Promise<
     }
 
     elPreviewContent.innerHTML = res.html;
-    elCompileTime.textContent = `Rust Engine: ${res.elapsed_ms} ms`;
+    elCompileTime.textContent = `レンダリング: ${res.elapsed_ms} ms`;
 
     await renderMathAndDiagrams(elPreviewContent);
     updateSlideVisibility();
@@ -602,12 +644,10 @@ function setRenderMode(mode: RenderMode): void {
     btnModeDoc.classList.add("active");
     btnModeSlide.classList.remove("active");
     elPreviewViewport.className = "preview-viewport mode-document";
-    elPreviewTitle.textContent = "👁️ プレビュー (ドキュメント形式・A4縦)";
   } else {
     btnModeSlide.classList.add("active");
     btnModeDoc.classList.remove("active");
     elPreviewViewport.className = "preview-viewport mode-slide";
-    elPreviewTitle.textContent = "👁️ プレビュー (スライド形式・16:9)";
   }
   void compileCurrentMarkdown();
 }
@@ -1248,40 +1288,10 @@ function bindEvents(): void {
     setStatus(`資料テーマを「${selectedId}」に切り替えました`);
   });
 
-  btnEditTheme.addEventListener("click", () => {
-    openCustomThemeEditorModal();
-  });
-
   modalThemeEditor.addEventListener("close", () => {
     void handleThemeEditorModalClose();
   });
 
-  // Workspace controls (OS native directory picker dialog)
-  btnOpenFolder.addEventListener("click", async () => {
-    try {
-      const selectedPath = await invoke<string | null>("pick_workspace_folder", {
-        currentPath: state.workspacePath || null,
-      });
-      if (selectedPath) {
-        state.currentFilePath = "";
-        await loadWorkspace(selectedPath);
-      }
-    } catch (err) {
-      // Fallback to text prompt if native dialog fails
-      const newPath = await promptModal(
-        "講義フォルダ（ワークスペース）の変更",
-        "開きたいディレクトリの絶対パスを入力してください:",
-        state.workspacePath
-      );
-      if (newPath) {
-        state.currentFilePath = "";
-        await loadWorkspace(newPath);
-      }
-    }
-  });
-
-  btnNewFile.addEventListener("click", () => void createNewFileFlow());
-  btnSaveFile.addEventListener("click", () => void saveCurrentFile());
   btnParentDir.addEventListener("click", () => void navigateToParentDirectory());
   btnRevealExplorer.addEventListener("click", () =>
     void revealInExplorer(state.currentFilePath || state.workspacePath)
@@ -1291,20 +1301,16 @@ function bindEvents(): void {
   );
   btnRefreshTree.addEventListener("click", () => void loadWorkspace(state.workspacePath));
 
-  // Export buttons & Reveal exported file in Finder / Explorer
-  btnExportHtml.addEventListener("click", () => void exportHtmlFlow());
-  btnExportPdf.addEventListener("click", () => void exportPdfFlow());
+  // Reveal exported file in Finder / Explorer from export modal
   btnRevealExported.addEventListener("click", () => {
     if (modalExportPath.value) {
       void revealInExplorer(modalExportPath.value);
     }
   });
 
-  // App UI Theme & Help
-  btnThemeToggle.addEventListener("click", toggleColorScheme);
-  btnHelp.addEventListener("click", () => {
-    modalHelp.returnValue = "";
-    modalHelp.showModal();
+  btnClearLogs.addEventListener("click", () => {
+    activityLogs.length = 0;
+    renderActivityLogs();
   });
 
   // Quick bar chips
@@ -1317,20 +1323,48 @@ function bindEvents(): void {
 
   const btnInsertImage = document.getElementById("btn-insert-image");
   if (btnInsertImage) {
-    btnInsertImage.addEventListener("click", async () => {
-      try {
-        const mdImageTag = await invoke<string | null>("pick_image_file", {
-          workspacePath: state.workspacePath,
-          currentFilePath: state.currentFilePath || null,
-        });
-        if (mdImageTag) {
-          insertRawTextAtCursor(`\n${mdImageTag}\n`);
-          setStatus(`画像を挿入しました (Base64自動埋め込み対象)`);
-        }
-      } catch (err) {
-        setStatus(`画像選択エラー: ${String(err)}`);
-      }
+    btnInsertImage.addEventListener("click", () => void insertImageFlow());
+  }
+}
+
+async function openFolderFlow(): Promise<void> {
+  if (state.isDirty && state.currentFilePath) {
+    await saveCurrentFile();
+  }
+  try {
+    const selectedPath = await invoke<string | null>("pick_workspace_folder", {
+      currentPath: state.workspacePath || null,
     });
+    if (selectedPath) {
+      state.currentFilePath = "";
+      await loadWorkspace(selectedPath);
+    }
+  } catch (err) {
+    // Fallback to text prompt if native dialog fails
+    const newPath = await promptModal(
+      "講義フォルダ（ワークスペース）の変更",
+      "開きたいディレクトリの絶対パスを入力してください:",
+      state.workspacePath
+    );
+    if (newPath) {
+      state.currentFilePath = "";
+      await loadWorkspace(newPath);
+    }
+  }
+}
+
+async function insertImageFlow(): Promise<void> {
+  try {
+    const mdImageTag = await invoke<string | null>("pick_image_file", {
+      workspacePath: state.workspacePath,
+      currentFilePath: state.currentFilePath || null,
+    });
+    if (mdImageTag) {
+      insertRawTextAtCursor(`\n${mdImageTag}\n`);
+      setStatus(`画像を挿入しました (Base64自動埋め込み対象)`);
+    }
+  } catch (err) {
+    setStatus(`画像選択エラー: ${String(err)}`);
   }
 }
 
@@ -1499,7 +1533,6 @@ function setupPaneLayoutAndResizers(): void {
   btnCloseSidebar.addEventListener("click", () => toggleSidebarVisibility(false));
 
   btnTogglePreview.addEventListener("click", () => togglePreviewVisibility());
-  btnClosePreview.addEventListener("click", () => togglePreviewVisibility(false));
 
   // Global keyboard shortcuts: Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview)
   window.addEventListener("keydown", (e) => {
@@ -1659,6 +1692,21 @@ function saveRecentWorkspaces(): void {
   } catch (_) {}
 }
 
+interface MenuActionPayload {
+  action: string;
+  path: string | null;
+}
+
+async function syncRecentWorkspacesToNativeMenu(): Promise<void> {
+  try {
+    await invoke("update_recent_workspaces_menu", {
+      recentPaths: recentWorkspaces.slice(0, MAX_RECENT_WORKSPACES),
+    });
+  } catch (_) {
+    // Ignore when running outside Tauri
+  }
+}
+
 function recordRecentWorkspace(workspacePath: string): void {
   const normalized = workspacePath.trim();
   if (!normalized) return;
@@ -1667,253 +1715,108 @@ function recordRecentWorkspace(workspacePath: string): void {
     ...recentWorkspaces.filter((p) => p !== normalized),
   ].slice(0, MAX_RECENT_WORKSPACES);
   saveRecentWorkspaces();
-  renderRecentWorkspacesMenu();
+  void syncRecentWorkspacesToNativeMenu();
 }
 
 function removeRecentWorkspace(workspacePath: string): void {
   recentWorkspaces = recentWorkspaces.filter((p) => p !== workspacePath);
   saveRecentWorkspaces();
-  renderRecentWorkspacesMenu();
+  void syncRecentWorkspacesToNativeMenu();
 }
 
-function getWorkspaceBasename(dirPath: string): string {
-  const cleaned = dirPath.replace(/[\\/]+$/, "");
-  if (!cleaned) return dirPath;
-  const parts = cleaned.split(/[\\/]/);
-  return parts[parts.length - 1] || dirPath;
-}
-
-function closeRecentWorkspacesMenu(restoreFocus = false, fromPointer = false): void {
-  if (restoreFocus) {
-    try {
-      (btnRecentWorkspaces as HTMLElement).focus(
-        fromPointer ? ({ focusVisible: false } as FocusOptions) : undefined
-      );
-    } catch (_) {
-      btnRecentWorkspaces.focus();
-    }
+async function openRecentWorkspacePath(dirPath: string): Promise<void> {
+  if (state.isDirty && state.currentFilePath) {
+    await saveCurrentFile();
   }
+  state.currentFilePath = "";
+  const ok = await loadWorkspace(dirPath, { silentError: true });
+  if (!ok) {
+    removeRecentWorkspace(dirPath);
+    const defaultWs = await invoke<string>("get_default_workspace");
+    await loadWorkspace(defaultWs);
+    setStatus(
+      `フォルダが見つかりませんでした (${dirPath})。履歴から削除し、サンプルフォルダを開きました`
+    );
+  }
+}
+
+async function setupNativeMenuListener(): Promise<void> {
   try {
-    if (elRecentWorkspacesMenu.matches(":popover-open")) {
-      elRecentWorkspacesMenu.hidePopover();
-    }
+    await listen<MenuActionPayload>("menu-action", (event) => {
+      const { action, path } = event.payload;
+      switch (action) {
+        case "file:new":
+          void createNewFileFlow();
+          break;
+        case "file:open-folder":
+          void openFolderFlow();
+          break;
+        case "file:open-recent":
+          if (path) {
+            void openRecentWorkspacePath(path);
+          }
+          break;
+        case "file:clear-recent":
+          recentWorkspaces = state.workspacePath ? [state.workspacePath] : [];
+          saveRecentWorkspaces();
+          void syncRecentWorkspacesToNativeMenu();
+          setStatus("過去のフォルダ履歴をクリアしました");
+          break;
+        case "file:save":
+          void saveCurrentFile();
+          break;
+        case "file:export-html":
+          void exportHtmlFlow();
+          break;
+        case "file:export-pdf":
+          void exportPdfFlow();
+          break;
+        case "file:reveal-explorer":
+          void revealInExplorer(state.currentFilePath || state.workspacePath);
+          break;
+        case "edit:insert-image":
+          void insertImageFlow();
+          break;
+        case "view:mode-document":
+          setRenderMode("document");
+          break;
+        case "view:mode-slide":
+          setRenderMode("slide");
+          break;
+        case "view:toggle-sidebar":
+          toggleSidebarVisibility();
+          break;
+        case "view:toggle-preview":
+          togglePreviewVisibility();
+          break;
+        case "view:edit-theme":
+          openCustomThemeEditorModal();
+          break;
+        case "view:toggle-color-scheme":
+          toggleColorScheme();
+          break;
+        case "view:open-logs":
+          openActivityLogsModal();
+          break;
+        case "help:open-guide":
+          modalHelp.returnValue = "";
+          modalHelp.showModal();
+          break;
+      }
+    });
   } catch (_) {
-    elRecentWorkspacesMenu.removeAttribute("data-open");
-  }
-}
-
-function positionRecentMenuFallback(): void {
-  if (typeof CSS !== "undefined" && CSS.supports("position-area", "block-end")) {
-    return;
-  }
-  const triggerRect = btnRecentWorkspaces.getBoundingClientRect();
-  const menuRect = elRecentWorkspacesMenu.getBoundingClientRect();
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const gap = 6;
-
-  let left = triggerRect.left;
-  if (left + menuRect.width > vw - 12) {
-    left = Math.max(12, triggerRect.right - menuRect.width);
-  }
-  let top = triggerRect.bottom + gap;
-  if (top + menuRect.height > vh - 12 && triggerRect.top - gap - menuRect.height >= 12) {
-    top = triggerRect.top - gap - menuRect.height;
-  }
-
-  elRecentWorkspacesMenu.style.left = `${Math.round(left)}px`;
-  elRecentWorkspacesMenu.style.top = `${Math.round(top)}px`;
-}
-
-function renderRecentWorkspacesMenu(): void {
-  elRecentWorkspacesList.innerHTML = "";
-  const supportsFocusGroup = "focusGroup" in HTMLElement.prototype;
-
-  if (recentWorkspaces.length === 0) {
-    const emptyDiv = document.createElement("div");
-    emptyDiv.className = "recent-menu-empty";
-    emptyDiv.textContent = "最近開いたフォルダはありません";
-    elRecentWorkspacesList.appendChild(emptyDiv);
-    return;
-  }
-
-  for (const dirPath of recentWorkspaces) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "recent-menu-item";
-    if (!supportsFocusGroup) {
-      btn.setAttribute("role", "menuitem");
-    }
-    btn.title = dirPath;
-
-    const isCurrent = dirPath === state.workspacePath;
-
-    const checkSpan = document.createElement("span");
-    checkSpan.className = "recent-menu-item-check";
-    checkSpan.setAttribute("aria-hidden", "true");
-    checkSpan.textContent = isCurrent ? "✓" : "📁";
-
-    const bodyDiv = document.createElement("div");
-    bodyDiv.className = "recent-menu-item-body";
-
-    const nameSpan = document.createElement("span");
-    nameSpan.className = "recent-menu-item-name";
-    nameSpan.textContent = getWorkspaceBasename(dirPath);
-
-    const pathSpan = document.createElement("span");
-    pathSpan.className = "recent-menu-item-path";
-    pathSpan.textContent = dirPath;
-
-    bodyDiv.appendChild(nameSpan);
-    bodyDiv.appendChild(pathSpan);
-
-    btn.appendChild(checkSpan);
-    btn.appendChild(bodyDiv);
-
-    btn.addEventListener("click", async (ev) => {
-      const fromPointer = ev.detail !== 0;
-      closeRecentWorkspacesMenu(true, fromPointer);
-
-      if (state.isDirty && state.currentFilePath) {
-        await saveCurrentFile();
-      }
-      state.currentFilePath = "";
-      const ok = await loadWorkspace(dirPath, { silentError: true });
-      if (!ok) {
-        removeRecentWorkspace(dirPath);
-        const defaultWs = await invoke<string>("get_default_workspace");
-        await loadWorkspace(defaultWs);
-        setStatus(
-          `フォルダが見つかりませんでした (${dirPath})。履歴から削除し、サンプルフォルダを開きました`
-        );
-      }
-    });
-
-    elRecentWorkspacesList.appendChild(btn);
-  }
-
-  const hr = document.createElement("hr");
-  elRecentWorkspacesList.appendChild(hr);
-
-  const btnClear = document.createElement("button");
-  btnClear.type = "button";
-  btnClear.className = "recent-menu-item recent-menu-clear";
-  if (!supportsFocusGroup) {
-    btnClear.setAttribute("role", "menuitem");
-  }
-  btnClear.textContent = "🗑 履歴をクリア";
-  btnClear.addEventListener("click", (ev) => {
-    const fromPointer = ev.detail !== 0;
-    recentWorkspaces = state.workspacePath ? [state.workspacePath] : [];
-    saveRecentWorkspaces();
-    renderRecentWorkspacesMenu();
-    closeRecentWorkspacesMenu(true, fromPointer);
-    setStatus("過去のフォルダ履歴をクリアしました");
-  });
-  elRecentWorkspacesList.appendChild(btnClear);
-}
-
-function setupRecentWorkspacesMenu(): void {
-  renderRecentWorkspacesMenu();
-
-  let enterOnOpen = false;
-  let pointerPressed = false;
-
-  btnRecentWorkspaces.addEventListener("pointerdown", () => {
-    pointerPressed = true;
-  });
-
-  // Fallback for browsers without Invoker Commands (`commandfor` / `command="toggle-popover"`)
-  if (!("commandForElement" in HTMLButtonElement.prototype)) {
-    btnRecentWorkspaces.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      const isOpen = elRecentWorkspacesMenu.matches(":popover-open");
-      if (isOpen) {
-        closeRecentWorkspacesMenu(true, pointerPressed);
-      } else {
-        enterOnOpen = !pointerPressed;
-        try {
-          (
-            elRecentWorkspacesMenu as HTMLElement & {
-              showPopover: (opts?: { source?: HTMLElement }) => void;
-            }
-          ).showPopover({ source: btnRecentWorkspaces });
-        } catch (_) {
-          elRecentWorkspacesMenu.showPopover();
-        }
-      }
-      pointerPressed = false;
-    });
-  } else {
-    btnRecentWorkspaces.addEventListener("click", () => {
-      enterOnOpen = !pointerPressed;
-      pointerPressed = false;
-    });
-  }
-
-  btnRecentWorkspaces.addEventListener("keydown", (ev) => {
-    if (ev.key === "ArrowDown") {
-      ev.preventDefault();
-      enterOnOpen = true;
-      if (!elRecentWorkspacesMenu.matches(":popover-open")) {
-        btnRecentWorkspaces.click();
-      } else {
-        const first = elRecentWorkspacesList.querySelector<HTMLButtonElement>("button:not(:disabled)");
-        first?.focus({ preventScroll: true });
-      }
-    }
-  });
-
-  elRecentWorkspacesMenu.addEventListener("toggle", (ev) => {
-    const toggleEv = ev as ToggleEvent;
-    const isOpen = toggleEv.newState === "open";
-    btnRecentWorkspaces.setAttribute("aria-expanded", String(isOpen));
-    if (isOpen) {
-      renderRecentWorkspacesMenu();
-      positionRecentMenuFallback();
-      if (enterOnOpen) {
-        const first = elRecentWorkspacesList.querySelector<HTMLButtonElement>("button:not(:disabled)");
-        first?.focus({ preventScroll: true });
-      }
-      enterOnOpen = false;
-    }
-  });
-
-  // Fallback for browsers without native `focusgroup` (Safari / WKWebView / Firefox)
-  if (!("focusGroup" in HTMLElement.prototype)) {
-    elRecentWorkspacesList.setAttribute("role", "menu");
-    elRecentWorkspacesList.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") {
-        ev.preventDefault();
-        closeRecentWorkspacesMenu(true, false);
-        return;
-      }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(ev.key)) return;
-      const items = Array.from(
-        elRecentWorkspacesList.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")
-      );
-      if (items.length === 0) return;
-      const current = items.indexOf(document.activeElement as HTMLButtonElement);
-      let next = 0;
-      if (ev.key === "Home") {
-        next = 0;
-      } else if (ev.key === "End") {
-        next = items.length - 1;
-      } else if (current >= 0) {
-        next = (current + (ev.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
-      }
-      ev.preventDefault();
-      items[next].focus({ preventScroll: true });
-    });
+    // Ignore when running outside Tauri
   }
 }
 
 async function initApp(): Promise<void> {
   bindEvents();
   setupPaneLayoutAndResizers();
-  setupRecentWorkspacesMenu();
+  void setupNativeMenuListener();
   void setupNativeDragDrop();
   try {
+    await syncRecentWorkspacesToNativeMenu();
+
     // 前回最後に開いていたディレクトリがあれば優先して開く
     const lastDir = recentWorkspaces[0];
     if (lastDir) {

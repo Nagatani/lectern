@@ -15,7 +15,18 @@ use pdf::render_html_to_pdf;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::{AppHandle, Emitter, Manager, State};
 use themes::{list_available_themes, resolve_theme_css, save_custom_theme_file, ThemeInfo};
+
+struct RecentWorkspacesMenuState(Mutex<Vec<String>>);
+
+#[derive(Debug, Clone, Serialize)]
+struct MenuActionPayload {
+    action: String,
+    path: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportResult {
@@ -411,9 +422,238 @@ async fn export_lecture_pdf(
     }))
 }
 
+fn format_recent_menu_label(dir_path: &str) -> String {
+    let p = Path::new(dir_path);
+    let name = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(dir_path);
+
+    let short_path = if let Ok(home) = std::env::var("HOME") {
+        if let Some(stripped) = dir_path.strip_prefix(&home) {
+            format!("~{}", stripped)
+        } else {
+            dir_path.to_string()
+        }
+    } else {
+        dir_path.to_string()
+    };
+
+    if name == short_path {
+        name.to_string()
+    } else {
+        format!("{}  ({})", name, short_path)
+    }
+}
+
+fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Menu<tauri::Wry>> {
+    // 1. 最近開いたフォルダ サブメニュー
+    let mut recent_sub = SubmenuBuilder::new(app, "最近開いたフォルダ");
+    if recent_paths.is_empty() {
+        let empty_item = MenuItemBuilder::with_id("recent:empty", "(履歴なし)")
+            .enabled(false)
+            .build(app)?;
+        recent_sub = recent_sub.item(&empty_item);
+    } else {
+        for (idx, path) in recent_paths.iter().take(10).enumerate() {
+            let label = format_recent_menu_label(path);
+            let item = MenuItemBuilder::with_id(format!("recent:{}", idx), label).build(app)?;
+            recent_sub = recent_sub.item(&item);
+        }
+    }
+    let clear_recent = MenuItemBuilder::with_id("file:clear-recent", "履歴をクリア")
+        .enabled(!recent_paths.is_empty())
+        .build(app)?;
+    let recent_submenu = recent_sub.separator().item(&clear_recent).build()?;
+
+    // 2. ファイル メニュー
+    let new_file = MenuItemBuilder::with_id("file:new", "新規作成...")
+        .accelerator("CmdOrCtrl+N")
+        .build(app)?;
+    let open_folder = MenuItemBuilder::with_id("file:open-folder", "フォルダを開く...")
+        .accelerator("CmdOrCtrl+O")
+        .build(app)?;
+    let save_file = MenuItemBuilder::with_id("file:save", "保存")
+        .accelerator("CmdOrCtrl+S")
+        .build(app)?;
+    let export_html = MenuItemBuilder::with_id("file:export-html", "HTML として出力...")
+        .accelerator("CmdOrCtrl+Shift+E")
+        .build(app)?;
+    let export_pdf = MenuItemBuilder::with_id("file:export-pdf", "PDF として出力...")
+        .accelerator("CmdOrCtrl+Shift+P")
+        .build(app)?;
+    let reveal_explorer =
+        MenuItemBuilder::with_id("file:reveal-explorer", "Finder / エクスプローラーで表示")
+            .accelerator("CmdOrCtrl+Shift+R")
+            .build(app)?;
+
+    #[allow(unused_mut)]
+    let mut file_sub = SubmenuBuilder::new(app, "ファイル")
+        .item(&new_file)
+        .item(&open_folder)
+        .item(&recent_submenu)
+        .separator()
+        .item(&save_file)
+        .separator()
+        .item(&export_html)
+        .item(&export_pdf)
+        .separator()
+        .item(&reveal_explorer);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        file_sub = file_sub
+            .separator()
+            .item(&PredefinedMenuItem::quit(app, Some("終了"))?);
+    }
+    let file_submenu = file_sub.build()?;
+
+    // 3. 編集 メニュー（OS標準の Undo/Redo/Cut/Copy/Paste/SelectAll + 画像挿入）
+    let insert_image = MenuItemBuilder::with_id("edit:insert-image", "画像を挿入...")
+        .accelerator("CmdOrCtrl+Shift+I")
+        .build(app)?;
+    let edit_submenu = SubmenuBuilder::new(app, "編集")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .separator()
+        .item(&insert_image)
+        .build()?;
+
+    // 4. 表示 メニュー
+    let mode_doc = MenuItemBuilder::with_id("view:mode-document", "ドキュメント形式 (A4縦)")
+        .accelerator("CmdOrCtrl+1")
+        .build(app)?;
+    let mode_slide = MenuItemBuilder::with_id("view:mode-slide", "スライド形式 (16:9)")
+        .accelerator("CmdOrCtrl+2")
+        .build(app)?;
+    let toggle_sidebar =
+        MenuItemBuilder::with_id("view:toggle-sidebar", "ファイル一覧の表示 / 非表示")
+            .accelerator("CmdOrCtrl+B")
+            .build(app)?;
+    let toggle_preview =
+        MenuItemBuilder::with_id("view:toggle-preview", "プレビューの表示 / 非表示")
+            .accelerator("CmdOrCtrl+\\")
+            .build(app)?;
+    let edit_theme =
+        MenuItemBuilder::with_id("view:edit-theme", "カスタム CSS テーマを編集...").build(app)?;
+    let toggle_color_scheme =
+        MenuItemBuilder::with_id("view:toggle-color-scheme", "ライト / ダークモード切替")
+            .build(app)?;
+    let open_logs = MenuItemBuilder::with_id("view:open-logs", "アクティビティログを表示...")
+        .accelerator("CmdOrCtrl+Shift+L")
+        .build(app)?;
+
+    let view_submenu = SubmenuBuilder::new(app, "表示")
+        .item(&mode_doc)
+        .item(&mode_slide)
+        .separator()
+        .item(&toggle_sidebar)
+        .item(&toggle_preview)
+        .separator()
+        .item(&edit_theme)
+        .item(&toggle_color_scheme)
+        .separator()
+        .item(&open_logs)
+        .build()?;
+
+    // 5. ヘルプ メニュー
+    let open_help = MenuItemBuilder::with_id("help:open-guide", "Markdown 記法ガイド").build(app)?;
+    let help_submenu = SubmenuBuilder::new(app, "ヘルプ").item(&open_help).build()?;
+
+    #[allow(unused_mut)]
+    let mut root = MenuBuilder::new(app);
+
+    #[cfg(target_os = "macos")]
+    {
+        let app_submenu = SubmenuBuilder::new(app, "Lectern")
+            .item(&PredefinedMenuItem::about(app, Some("Lectern について"), None)?)
+            .separator()
+            .item(&PredefinedMenuItem::hide(app, Some("Lectern を隠す"))?)
+            .item(&PredefinedMenuItem::hide_others(app, Some("ほかを隠す"))?)
+            .item(&PredefinedMenuItem::show_all(app, Some("すべてを表示"))?)
+            .separator()
+            .item(&PredefinedMenuItem::quit(app, Some("Lectern を終了"))?)
+            .build()?;
+        root = root.item(&app_submenu);
+    }
+
+    root.item(&file_submenu)
+        .item(&edit_submenu)
+        .item(&view_submenu)
+        .item(&help_submenu)
+        .build()
+}
+
+#[tauri::command]
+fn update_recent_workspaces_menu(
+    app: AppHandle,
+    state: State<'_, RecentWorkspacesMenuState>,
+    recent_paths: Vec<String>,
+) -> Result<(), String> {
+    let trimmed: Vec<String> = recent_paths
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(10)
+        .collect();
+
+    if let Ok(mut guard) = state.0.lock() {
+        *guard = trimmed.clone();
+    }
+
+    let menu = build_app_menu(&app, &trimmed)
+        .map_err(|e| format!("メニューの構築に失敗しました: {}", e))?;
+    app.set_menu(menu)
+        .map_err(|e| format!("メニューの更新に失敗しました: {}", e))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(RecentWorkspacesMenuState(Mutex::new(Vec::new())))
+        .setup(|app| {
+            let menu = build_app_menu(app.handle(), &[])?;
+            app.set_menu(menu)?;
+            Ok(())
+        })
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            if let Some(idx_str) = id.strip_prefix("recent:") {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    let target_path = app
+                        .state::<RecentWorkspacesMenuState>()
+                        .0
+                        .lock()
+                        .ok()
+                        .and_then(|list| list.get(idx).cloned());
+                    if let Some(path) = target_path {
+                        let _ = app.emit(
+                            "menu-action",
+                            MenuActionPayload {
+                                action: "file:open-recent".to_string(),
+                                path: Some(path),
+                            },
+                        );
+                    }
+                }
+                return;
+            }
+
+            let _ = app.emit(
+                "menu-action",
+                MenuActionPayload {
+                    action: id,
+                    path: None,
+                },
+            );
+        })
         .invoke_handler(tauri::generate_handler![
             get_default_workspace,
             get_parent_directory,
@@ -431,6 +671,7 @@ pub fn run() {
             save_custom_theme,
             export_lecture_html,
             export_lecture_pdf,
+            update_recent_workspaces_menu,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lectern Tauri application");

@@ -17,53 +17,25 @@
   </head>
   <body>
     <div id="app" class="app-shell">
-      <!-- Top Header / Toolbar -->
+      <!-- Top Header / Toolbar (Decluttered: File/Export/History/Theme-Edit/Help live in native menu bar) -->
       <header class="toolbar">
         <div class="toolbar-left">
           <div class="brand">
-            <span class="brand-badge">Rust + Tauri</span>
             <h1 class="brand-title">Lectern</h1>
           </div>
-          <div class="workspace-controls">
-            <button type="button" id="btn-open-folder" class="btn btn-secondary" title="講義フォルダを開く">
-              📂 フォルダ変更
-            </button>
-            <button
-              type="button"
-              id="btn-recent-workspaces"
-              class="btn btn-secondary"
-              aria-haspopup="menu"
-              aria-expanded="false"
-              commandfor="recent-workspaces-menu"
-              command="toggle-popover"
-              title="最近開いたフォルダ履歴（最新10件）"
-            >
-              🕒 履歴 <span aria-hidden="true">▾</span>
-            </button>
-            <div id="recent-workspaces-menu" class="recent-menu-popover" popover="auto">
-              <div
-                id="recent-workspaces-list"
-                class="recent-menu-list"
-                focusgroup="menu nomemory"
-                aria-labelledby="btn-recent-workspaces"
-              ></div>
-            </div>
-            <button type="button" id="btn-new-file" class="btn btn-secondary" title="新規Markdownファイルを作成">
-              ＋ 新規作成
-            </button>
-            <button type="button" id="btn-save-file" class="btn btn-secondary" title="保存 (Cmd+S / Ctrl+S)">
-              💾 保存
-            </button>
+          <div class="active-file-meta">
+            <span id="current-file-indicator" class="file-indicator">未選択</span>
+            <span id="save-status-badge" class="status-badge saved">Saved</span>
           </div>
         </div>
 
         <div class="toolbar-center">
           <div class="mode-segmented" role="group" aria-label="表示・出力モード切替">
             <button type="button" id="mode-document" class="segment-btn active" data-mode="document">
-              📄 ドキュメント (A4縦)
+              📄 ドキュメント
             </button>
             <button type="button" id="mode-slide" class="segment-btn" data-mode="slide">
-              🖥️ スライド (16:9)
+              🖥️ スライド
             </button>
           </div>
 
@@ -78,33 +50,36 @@
         </div>
 
         <div class="toolbar-right">
-          <div class="theme-picker-group" role="group" aria-label="資料CSSテーマ切替">
-            <select id="select-lecture-theme" class="theme-select" aria-label="資料テーマ選択" title="プレビューとHTML/PDF出力のCSSテーマを切り替え">
-              <option value="handout">🎨 Handout (講義レジュメ・明朝)</option>
-            </select>
-            <button type="button" id="btn-edit-theme" class="btn btn-secondary" title="カスタムCSSテーマを編集・新規保存">
-              🎨 CSS編集
+          <select id="select-lecture-theme" class="theme-select" aria-label="資料テーマ選択" title="プレビューとHTML/PDF出力のCSSテーマを切り替え">
+            <option value="handout">🎨 Handout (講義レジュメ・明朝)</option>
+          </select>
+
+          <div class="pane-toggle-group" role="group" aria-label="パネル表示切替">
+            <button
+              type="button"
+              id="btn-toggle-sidebar"
+              class="chip-btn chip-toggle active"
+              aria-pressed="true"
+              title="ファイルエクスプローラーの表示/非表示 (Cmd+B / Ctrl+B)"
+            >
+              ◧ ファイル
+            </button>
+            <button
+              type="button"
+              id="btn-toggle-preview"
+              class="chip-btn chip-toggle active"
+              aria-pressed="true"
+              title="プレビューの表示/非表示 (Cmd+\ / Ctrl+\)"
+            >
+              👁️ プレビュー
             </button>
           </div>
-
-          <button type="button" id="btn-export-html" class="btn btn-primary" title="スタンドアロンHTMLとして出力">
-            🌐 HTML出力
-          </button>
-          <button type="button" id="btn-export-pdf" class="btn btn-accent" title="高品質PDFとして出力">
-            📑 PDF出力
-          </button>
-          <button type="button" id="btn-theme-toggle" class="btn btn-icon" aria-label="アプリUIテーマ切替" title="アプリ画面のライト/ダークモード切替">
-            🌓
-          </button>
-          <button type="button" id="btn-help" class="btn btn-icon" aria-label="記法ヘルプ" title="講義Markdown記法ガイド">
-            ❓
-          </button>
         </div>
       </header>
 
       <!-- Quick Insert Bar for Lecture Authoring -->
       <div class="quick-bar" role="toolbar" aria-label="マークダウン挿入ツールバー">
-        <span class="quick-bar-label">クイック挿入:</span>
+        <span class="quick-bar-label">挿入:</span>
         <button type="button" class="chip-btn" data-insert="slide-break" title="スライド区切り (---) を挿入">＋ スライド区切り</button>
         <button type="button" class="chip-btn" data-insert="math-block" title="ディスプレイ数式 ($$ ... $$) を挿入">∑ 数式ブロック</button>
         <button type="button" class="chip-btn" data-insert="math-inline" title="インライン数式 ($ ... $) を挿入">$ インライン数式</button>
@@ -113,29 +88,6 @@
         <button type="button" id="btn-insert-image" class="chip-btn" title="画像ファイル (PNG/JPEG等) を選択して挿入 (Base64自動埋め込み)">🖼️ 画像挿入</button>
         <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
         <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
-        <div class="quick-bar-spacer"></div>
-        <div class="pane-toggle-group" role="group" aria-label="パネル表示切替">
-          <button
-            type="button"
-            id="btn-toggle-sidebar"
-            class="chip-btn chip-toggle active"
-            aria-pressed="true"
-            title="ファイルエクスプローラーの表示/非表示 (Cmd+B / Ctrl+B)"
-          >
-            ◧ ファイル一覧
-          </button>
-          <button
-            type="button"
-            id="btn-toggle-preview"
-            class="chip-btn chip-toggle active"
-            aria-pressed="true"
-            title="プレビューの表示/非表示 (Cmd+\ / Ctrl+\)"
-          >
-            👁️ プレビュー
-          </button>
-        </div>
-        <span id="current-file-indicator" class="file-indicator">未選択</span>
-        <span id="save-status-badge" class="status-badge saved">Saved</span>
       </div>
 
       <!-- Main 3-Pane Workspace (Resizable Split Panes) -->
@@ -168,10 +120,6 @@
 
         <!-- Center Pane: Markdown Editor -->
         <section id="pane-editor" class="editor-pane" aria-label="マークダウンエディタ">
-          <div class="pane-header">
-            <span>✏️ Markdown エディタ</span>
-            <span id="editor-stats" class="pane-meta">0 行 · 0 文字</span>
-          </div>
           <div class="editor-container">
             <div id="line-numbers" class="line-numbers" aria-hidden="true">1</div>
             <textarea
@@ -197,27 +145,20 @@
 
         <!-- Right Pane: Live Preview -->
         <section id="pane-preview" class="preview-pane" aria-label="リアルタイムプレビュー">
-          <div class="pane-header">
-            <span id="preview-title">👁️ プレビュー (ドキュメント形式)</span>
-            <div class="pane-header-right">
-              <span id="compile-time" class="pane-meta">Rust Engine Ready</span>
-              <button type="button" id="btn-close-preview" class="btn btn-icon btn-sm" aria-label="プレビューを隠す" title="プレビューを非表示">✕</button>
-            </div>
-          </div>
           <div id="preview-viewport" class="preview-viewport mode-document">
             <article id="preview-content" class="lecture-render-root" data-lecture-theme="handout"></article>
           </div>
         </section>
       </main>
 
-      <!-- Footer Status Bar -->
+      <!-- Footer Status Bar (Essential Live Metrics Only) -->
       <footer class="statusbar">
-        <div id="status-message" class="status-message">準備完了</div>
+        <div class="status-left">
+          <span id="editor-stats">0 行 · 0 文字</span>
+        </div>
         <div class="status-right">
-          <span id="active-theme-indicator">Theme: default</span>
-          <span>Engine: Rust (pulldown-cmark + syntect)</span>
-          <span>Math: KaTeX</span>
-          <span>Diagrams: Mermaid</span>
+          <span id="active-theme-indicator">Theme: handout</span>
+          <span id="compile-time">レンダリング: —</span>
         </div>
       </footer>
     </div>
@@ -343,6 +284,19 @@ $$</code></pre>
           </div>
         </div>
         <div class="dialog-actions">
+          <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Activity Log Modal Dialog (Moved from Status Bar to View Menu) -->
+    <dialog id="modal-logs" class="modal-dialog modal-dialog-wide" closedby="any">
+      <form method="dialog" class="dialog-form">
+        <h2 class="dialog-title">📋 アクティビティログ</h2>
+        <p class="dialog-desc">ファイルの読み込み・保存・HTML/PDF出力・エラーなどの操作履歴（最新200件）</p>
+        <div id="activity-log-list" class="activity-log-list" role="log" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button type="button" id="btn-clear-logs" class="btn btn-secondary">ログをクリア</button>
           <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
         </div>
       </form>
