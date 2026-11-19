@@ -283,12 +283,10 @@ function applyLectureThemeToPreview(themeId: string): void {
  * Markdown先頭のフロントマター (`--- ... ---`) 内の `theme: xxx` を更新・追加する
  */
 function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boolean): void {
-  const raw = elEditor.value.replace(/\r\n/g, "\n");
+  const raw = elEditor.value;
   if (!raw.startsWith("---\n")) {
     if (!insertIfMissing) return;
-    elEditor.value = `---\ntheme: ${newThemeId}\n---\n\n${raw}`;
-    markDirty(true);
-    updateLineNumbersAndStats();
+    replaceEditorRangeWithUndo(`---\ntheme: ${newThemeId}\n---\n\n`, 0, 0);
     return;
   }
 
@@ -296,7 +294,6 @@ function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boo
   if (endIdx === -1) return;
 
   const yamlPart = raw.substring(4, endIdx);
-  const restPart = raw.substring(endIdx + 5);
   const lines = yamlPart.split("\n");
 
   let foundThemeLine = false;
@@ -313,11 +310,10 @@ function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boo
     updatedLines.push(`theme: ${newThemeId}`);
   }
 
-  const nextValue = `---\n${updatedLines.join("\n")}\n---\n${restPart}`;
-  if (nextValue !== raw) {
-    elEditor.value = nextValue;
-    markDirty(true);
-    updateLineNumbersAndStats();
+  const nextFrontmatter = `---\n${updatedLines.join("\n")}\n---\n`;
+  const currentFrontmatter = raw.substring(0, endIdx + 5);
+  if (nextFrontmatter !== currentFrontmatter) {
+    replaceEditorRangeWithUndo(nextFrontmatter, 0, endIdx + 5);
   }
 }
 
@@ -1201,21 +1197,34 @@ const SNIPPETS: Record<string, string> = {
     '\n<div class="lecture-columns">\n<div>\n\n### 左カラム：理論・定義\n- 線形変換 $T: V \\to W$\n- 核 $\\ker(T)$ と像 $\\mathrm{Im}(T)$\n\n</div>\n<div>\n\n### 右カラム：具体例・応用\n- 次元定理: $\\dim V = \\dim \\ker(T) + \\dim \\mathrm{Im}(T)$\n- 主成分分析 (PCA) への応用\n\n</div>\n</div>\n',
 };
 
-function insertSnippetAtCursor(snippetKey: string): void {
-  const snippet = SNIPPETS[snippetKey];
-  if (!snippet) return;
+/**
+ * OS標準の Undo / Redo スタック（Cmd+Z / Cmd+Shift+Z 等）を維持したまま
+ * エディタの指定範囲をテキストで置換・挿入する
+ */
+function replaceEditorRangeWithUndo(text: string, start: number, end: number): void {
+  elEditor.focus({ preventScroll: true });
+  elEditor.setSelectionRange(start, end);
 
-  const start = elEditor.selectionStart;
-  const end = elEditor.selectionEnd;
-  const value = elEditor.value;
+  let inserted = false;
+  try {
+    inserted = document.execCommand("insertText", false, text);
+  } catch (_) {
+    inserted = false;
+  }
 
-  elEditor.value = value.substring(0, start) + snippet + value.substring(end);
-  elEditor.selectionStart = elEditor.selectionEnd = start + snippet.length;
-  elEditor.focus();
+  if (!inserted) {
+    elEditor.setRangeText(text, start, end, "end");
+  }
 
   markDirty(true);
   updateLineNumbersAndStats();
   scheduleCompile();
+}
+
+function insertSnippetAtCursor(snippetKey: string): void {
+  const snippet = SNIPPETS[snippetKey];
+  if (!snippet) return;
+  replaceEditorRangeWithUndo(snippet, elEditor.selectionStart, elEditor.selectionEnd);
 }
 
 // ============================================================================
@@ -1242,13 +1251,7 @@ function bindEvents(): void {
       void saveCurrentFile();
     } else if (e.key === "Tab") {
       e.preventDefault();
-      const start = elEditor.selectionStart;
-      const end = elEditor.selectionEnd;
-      elEditor.value = elEditor.value.substring(0, start) + "  " + elEditor.value.substring(end);
-      elEditor.selectionStart = elEditor.selectionEnd = start + 2;
-      markDirty(true);
-      updateLineNumbersAndStats();
-      scheduleCompile();
+      replaceEditorRangeWithUndo("  ", elEditor.selectionStart, elEditor.selectionEnd);
     }
   });
 
@@ -1369,17 +1372,7 @@ async function insertImageFlow(): Promise<void> {
 }
 
 function insertRawTextAtCursor(text: string): void {
-  const start = elEditor.selectionStart;
-  const end = elEditor.selectionEnd;
-  const value = elEditor.value;
-
-  elEditor.value = value.substring(0, start) + text + value.substring(end);
-  elEditor.selectionStart = elEditor.selectionEnd = start + text.length;
-  elEditor.focus();
-
-  markDirty(true);
-  updateLineNumbersAndStats();
-  scheduleCompile();
+  replaceEditorRangeWithUndo(text, elEditor.selectionStart, elEditor.selectionEnd);
 }
 
 function isImagePath(p: string): boolean {
