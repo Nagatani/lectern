@@ -760,4 +760,37 @@ flowchart LR
         assert!(standalone.contains("data:font/woff2;base64,"));
         assert!(!standalone.contains("https://cdn.jsdelivr.net"));
     }
+
+    #[test]
+    fn test_cjk_emphasis_and_inline_code_without_spaces() {
+        let md = r#"これは**「重要」**なポイントです。
+
+配列の**サイズ(N)**を計算します。
+
+**C++**や**Rust**を学びます。
+
+これは**「`code`」**です。
+
+これは~~「取り消し」~~です。
+
+これは`println!`です。関数`foo()`と`「バー」`を呼ぶ。
+
+インラインコード内の`**not bold**`は変換しない。
+
+```rust
+let ptr = **x;
+```
+"#;
+
+        let res = compile_lecture_markdown(md, "document");
+        assert!(res.html.contains("これは<strong>「重要」</strong>なポイントです。"), "html={}", res.html);
+        assert!(res.html.contains("配列の<strong>サイズ(N)</strong>を計算します。"), "html={}", res.html);
+        assert!(res.html.contains("<strong>C++</strong>や<strong>Rust</strong>を学びます。"), "html={}", res.html);
+        assert!(res.html.contains("これは<strong>「<code>code</code>」</strong>です。"), "html={}", res.html);
+        assert!(res.html.contains("これは<del>「取り消し」</del>です。"), "html={}", res.html);
+        assert!(res.html.contains("これは<code>println!</code>です。"), "html={}", res.html);
+        assert!(res.html.contains("関数<code>foo()</code>と<code>「バー」</code>を呼ぶ。"), "html={}", res.html);
+        assert!(res.html.contains("<code>**not bold**</code>"), "html={}", res.html);
+        assert!(!res.html.contains("<strong>not bold</strong>"), "html={}", res.html);
+    }
 }

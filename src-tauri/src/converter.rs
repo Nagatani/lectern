@@ -447,6 +447,284 @@ fn replace_img_tag_src_with_base64(img_tag: &str, base_dir: Option<&Path>) -> St
     img_tag.to_string()
 }
 
+fn is_cjk_or_ascii_punct(c: char) -> bool {
+    c.is_ascii_punctuation()
+        || matches!(
+            c,
+            '\u{2000}'..='\u{206F}'
+                | '\u{3001}'..='\u{303F}'
+                | '\u{FE30}'..='\u{FE6F}'
+                | '\u{FF01}'..='\u{FF0F}'
+                | '\u{FF1A}'..='\u{FF20}'
+                | '\u{FF3B}'..='\u{FF40}'
+                | '\u{FF5B}'..='\u{FF65}'
+        )
+}
+
+/// CommonMark の flanking delimiter 規約により、日本語文中で前後にスペースがない
+/// `**...**` / `~~...~~`（例: `これは**「重要」**です`, `**C++**の解説`, `配列の**サイズ(N)**を計算`）
+/// が強調変換されない問題を解消する前処理。
+/// コードブロック・インラインコード・数式・エスケープ文字には一切干渉しない。
+fn preprocess_cjk_emphasis(markdown: &str) -> String {
+    let mut out_lines = Vec::new();
+    let mut in_code_fence = false;
+    let mut fence_char = '`';
+    let mut fence_len = 0usize;
+    let mut in_math_block = false;
+
+    for line in markdown.split('\n') {
+        let trimmed = line.trim_start();
+
+        if !in_math_block {
+            if let Some(first) = trimmed.chars().next() {
+                if first == '`' || first == '~' {
+                    let count = trimmed.chars().take_while(|&c| c == first).count();
+                    if count >= 3 {
+                        if !in_code_fence {
+                            in_code_fence = true;
+                            fence_char = first;
+                            fence_len = count;
+                            out_lines.push(line.to_string());
+                            continue;
+                        } else if first == fence_char
+                            && count >= fence_len
+                            && trimmed[count..].trim().is_empty()
+                        {
+                            in_code_fence = false;
+                            out_lines.push(line.to_string());
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        if in_code_fence {
+            out_lines.push(line.to_string());
+            continue;
+        }
+
+        if trimmed.trim_end() == "$$" {
+            in_math_block = !in_math_block;
+            out_lines.push(line.to_string());
+            continue;
+        }
+
+        if in_math_block {
+            out_lines.push(line.to_string());
+            continue;
+        }
+
+        let step1 = fix_cjk_delim_in_line(line, '*', "strong");
+        let step2 = fix_cjk_delim_in_line(&step1, '~', "del");
+        out_lines.push(step2);
+    }
+
+    out_lines.join("\n")
+}
+
+fn fix_cjk_delim_in_line(line: &str, delim: char, html_tag: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+
+    while i < len {
+        // バックスラッシュエスケープをそのまま通す
+        if chars[i] == '\\' && i + 1 < len {
+            out.push(chars[i]);
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+
+        // インラインコード (`...`, ``...``) をそのまま通す
+        if chars[i] == '`' {
+            let tick_count = chars[i..].iter().take_while(|&&c| c == '`').count();
+            let mut j = i + tick_count;
+            let mut closed = false;
+            while j < len {
+                if chars[j] == '`' {
+                    let close_count = chars[j..].iter().take_while(|&&c| c == '`').count();
+                    if close_count == tick_count {
+                        for &c in &chars[i..j + close_count] {
+                            out.push(c);
+                        }
+                        i = j + close_count;
+                        closed = true;
+                        break;
+                    }
+                    j += close_count;
+                } else {
+                    j += 1;
+                }
+            }
+            if !closed {
+                for &c in &chars[i..i + tick_count] {
+                    out.push(c);
+                }
+                i += tick_count;
+            }
+            continue;
+        }
+
+        // インライン数式 ($...$) をそのまま通す
+        if chars[i] == '$' {
+            let dollar_count = chars[i..].iter().take_while(|&&c| c == '$').count();
+            let mut j = i + dollar_count;
+            let mut closed = false;
+            while j < len {
+                if chars[j] == '\\' && j + 1 < len {
+                    j += 2;
+                    continue;
+                }
+                if chars[j] == '$' {
+                    let close_count = chars[j..].iter().take_while(|&&c| c == '$').count();
+                    if close_count == dollar_count {
+                        for &c in &chars[i..j + close_count] {
+                            out.push(c);
+                        }
+                        i = j + close_count;
+                        closed = true;
+                        break;
+                    }
+                    j += close_count;
+                } else {
+                    j += 1;
+                }
+            }
+            if !closed {
+                for &c in &chars[i..i + dollar_count] {
+                    out.push(c);
+                }
+                i += dollar_count;
+            }
+            continue;
+        }
+
+        // ちょうど2連続のデリミタ (`**` または `~~`) を検出
+        if i + 1 < len
+            && chars[i] == delim
+            && chars[i + 1] == delim
+            && (i == 0 || chars[i - 1] != delim)
+            && (i + 2 >= len || chars[i + 2] != delim)
+        {
+            // 開き直後が空白なら強調ではない
+            if i + 2 < len && !chars[i + 2].is_whitespace() {
+                if let Some(close_idx) = find_matching_double_delim(&chars, i + 2, delim) {
+                    let before_open = if i > 0 { Some(chars[i - 1]) } else { None };
+                    let after_open = chars[i + 2];
+                    let before_close = chars[close_idx - 1];
+                    let after_close = if close_idx + 2 < len {
+                        Some(chars[close_idx + 2])
+                    } else {
+                        None
+                    };
+
+                    let blocked_open = is_cjk_or_ascii_punct(after_open)
+                        && before_open
+                            .map(|c| !c.is_whitespace() && !is_cjk_or_ascii_punct(c))
+                            .unwrap_or(false);
+                    let blocked_close = is_cjk_or_ascii_punct(before_close)
+                        && after_close
+                            .map(|c| !c.is_whitespace() && !is_cjk_or_ascii_punct(c))
+                            .unwrap_or(false);
+
+                    if blocked_open || blocked_close {
+                        let inner: String = chars[i + 2..close_idx].iter().collect();
+                        out.push('<');
+                        out.push_str(html_tag);
+                        out.push('>');
+                        out.push_str(&inner);
+                        out.push_str("</");
+                        out.push_str(html_tag);
+                        out.push('>');
+                        i = close_idx + 2;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    out
+}
+
+fn find_matching_double_delim(chars: &[char], start: usize, delim: char) -> Option<usize> {
+    let len = chars.len();
+    let mut j = start;
+    while j + 1 < len {
+        if chars[j] == '\\' && j + 1 < len {
+            j += 2;
+            continue;
+        }
+        // インラインコード内のデリミタは無視
+        if chars[j] == '`' {
+            let tick_count = chars[j..].iter().take_while(|&&c| c == '`').count();
+            let mut k = j + tick_count;
+            let mut closed = false;
+            while k < len {
+                if chars[k] == '`' {
+                    let cc = chars[k..].iter().take_while(|&&c| c == '`').count();
+                    if cc == tick_count {
+                        j = k + cc;
+                        closed = true;
+                        break;
+                    }
+                    k += cc;
+                } else {
+                    k += 1;
+                }
+            }
+            if !closed {
+                j += tick_count;
+            }
+            continue;
+        }
+        // インライン数式内のデリミタは無視
+        if chars[j] == '$' {
+            let dc = chars[j..].iter().take_while(|&&c| c == '$').count();
+            let mut k = j + dc;
+            let mut closed = false;
+            while k < len {
+                if chars[k] == '\\' && k + 1 < len {
+                    k += 2;
+                    continue;
+                }
+                if chars[k] == '$' {
+                    let cc = chars[k..].iter().take_while(|&&c| c == '$').count();
+                    if cc == dc {
+                        j = k + cc;
+                        closed = true;
+                        break;
+                    }
+                    k += cc;
+                } else {
+                    k += 1;
+                }
+            }
+            if !closed {
+                j += dc;
+            }
+            continue;
+        }
+
+        if chars[j] == delim
+            && chars[j + 1] == delim
+            && (j == 0 || chars[j - 1] != delim)
+            && (j + 2 >= len || chars[j + 2] != delim)
+            && !chars[j - 1].is_whitespace()
+        {
+            return Some(j);
+        }
+        j += 1;
+    }
+    None
+}
+
 /// `pulldown-cmark` + `syntect` で Markdown チャンクを HTML に変換する
 fn render_markdown_chunk(
     markdown: &str,
@@ -454,13 +732,15 @@ fn render_markdown_chunk(
     theme: &syntect::highlighting::Theme,
     base_dir: Option<&Path>,
 ) -> String {
+    let preprocessed = preprocess_cjk_emphasis(markdown);
+
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
     options.insert(Options::ENABLE_MATH);
 
-    let parser = Parser::new_ext(markdown, options);
+    let parser = Parser::new_ext(&preprocessed, options);
     let mut events = Vec::new();
 
     let mut in_code_block = false;
