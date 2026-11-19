@@ -28,6 +28,26 @@
             <button type="button" id="btn-open-folder" class="btn btn-secondary" title="講義フォルダを開く">
               📂 フォルダ変更
             </button>
+            <button
+              type="button"
+              id="btn-recent-workspaces"
+              class="btn btn-secondary"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              commandfor="recent-workspaces-menu"
+              command="toggle-popover"
+              title="最近開いたフォルダ履歴（最新10件）"
+            >
+              🕒 履歴 <span aria-hidden="true">▾</span>
+            </button>
+            <div id="recent-workspaces-menu" class="recent-menu-popover" popover="auto">
+              <div
+                id="recent-workspaces-list"
+                class="recent-menu-list"
+                focusgroup="menu nomemory"
+                aria-labelledby="btn-recent-workspaces"
+              ></div>
+            </div>
             <button type="button" id="btn-new-file" class="btn btn-secondary" title="新規Markdownファイルを作成">
               ＋ 新規作成
             </button>

@@ -102,6 +102,9 @@ const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButt
 const btnClosePreview = document.getElementById("btn-close-preview") as HTMLButtonElement;
 
 const btnOpenFolder = document.getElementById("btn-open-folder") as HTMLButtonElement;
+const btnRecentWorkspaces = document.getElementById("btn-recent-workspaces") as HTMLButtonElement;
+const elRecentWorkspacesMenu = document.getElementById("recent-workspaces-menu") as HTMLDivElement;
+const elRecentWorkspacesList = document.getElementById("recent-workspaces-list") as HTMLDivElement;
 const btnNewFile = document.getElementById("btn-new-file") as HTMLButtonElement;
 const btnSaveFile = document.getElementById("btn-save-file") as HTMLButtonElement;
 const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
@@ -650,7 +653,10 @@ async function fetchDirectoryEntries(dirPath: string, forceReload = false): Prom
   return entries;
 }
 
-async function loadWorkspace(workspacePath: string): Promise<void> {
+async function loadWorkspace(
+  workspacePath: string,
+  options?: { silentError?: boolean }
+): Promise<boolean> {
   try {
     const isSameWorkspace = state.workspacePath === workspacePath;
     dirChildrenCache.clear();
@@ -662,6 +668,8 @@ async function loadWorkspace(workspacePath: string): Promise<void> {
     state.workspacePath = workspacePath;
     elWorkspacePathLabel.textContent = workspacePath;
     elWorkspacePathLabel.title = `${workspacePath} (クリックでFinder / エクスプローラー表示)`;
+
+    recordRecentWorkspace(workspacePath);
 
     await loadThemes();
     renderFileTree(entries);
@@ -676,8 +684,12 @@ async function loadWorkspace(workspacePath: string): Promise<void> {
     if (firstMd && !state.currentFilePath) {
       await openFile(firstMd.path, firstMd.name);
     }
+    return true;
   } catch (err) {
-    setStatus(`フォルダ読み込み失敗: ${String(err)}`);
+    if (!options?.silentError) {
+      setStatus(`フォルダ読み込み失敗: ${String(err)}`);
+    }
+    return false;
   }
 }
 
@@ -1615,11 +1627,310 @@ function setupPaneLayoutAndResizers(): void {
   });
 }
 
+// ============================================================================
+// Recent Workspaces History (Latest 10) & Auto-Restore on Launch
+// ============================================================================
+
+const RECENT_WORKSPACES_STORAGE_KEY = "lectern-recent-workspaces-v1";
+const MAX_RECENT_WORKSPACES = 10;
+
+let recentWorkspaces: string[] = loadRecentWorkspaces();
+
+function loadRecentWorkspaces(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_WORKSPACES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .slice(0, MAX_RECENT_WORKSPACES);
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveRecentWorkspaces(): void {
+  try {
+    localStorage.setItem(
+      RECENT_WORKSPACES_STORAGE_KEY,
+      JSON.stringify(recentWorkspaces.slice(0, MAX_RECENT_WORKSPACES))
+    );
+  } catch (_) {}
+}
+
+function recordRecentWorkspace(workspacePath: string): void {
+  const normalized = workspacePath.trim();
+  if (!normalized) return;
+  recentWorkspaces = [
+    normalized,
+    ...recentWorkspaces.filter((p) => p !== normalized),
+  ].slice(0, MAX_RECENT_WORKSPACES);
+  saveRecentWorkspaces();
+  renderRecentWorkspacesMenu();
+}
+
+function removeRecentWorkspace(workspacePath: string): void {
+  recentWorkspaces = recentWorkspaces.filter((p) => p !== workspacePath);
+  saveRecentWorkspaces();
+  renderRecentWorkspacesMenu();
+}
+
+function getWorkspaceBasename(dirPath: string): string {
+  const cleaned = dirPath.replace(/[\\/]+$/, "");
+  if (!cleaned) return dirPath;
+  const parts = cleaned.split(/[\\/]/);
+  return parts[parts.length - 1] || dirPath;
+}
+
+function closeRecentWorkspacesMenu(restoreFocus = false, fromPointer = false): void {
+  if (restoreFocus) {
+    try {
+      (btnRecentWorkspaces as HTMLElement).focus(
+        fromPointer ? ({ focusVisible: false } as FocusOptions) : undefined
+      );
+    } catch (_) {
+      btnRecentWorkspaces.focus();
+    }
+  }
+  try {
+    if (elRecentWorkspacesMenu.matches(":popover-open")) {
+      elRecentWorkspacesMenu.hidePopover();
+    }
+  } catch (_) {
+    elRecentWorkspacesMenu.removeAttribute("data-open");
+  }
+}
+
+function positionRecentMenuFallback(): void {
+  if (typeof CSS !== "undefined" && CSS.supports("position-area", "block-end")) {
+    return;
+  }
+  const triggerRect = btnRecentWorkspaces.getBoundingClientRect();
+  const menuRect = elRecentWorkspacesMenu.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const gap = 6;
+
+  let left = triggerRect.left;
+  if (left + menuRect.width > vw - 12) {
+    left = Math.max(12, triggerRect.right - menuRect.width);
+  }
+  let top = triggerRect.bottom + gap;
+  if (top + menuRect.height > vh - 12 && triggerRect.top - gap - menuRect.height >= 12) {
+    top = triggerRect.top - gap - menuRect.height;
+  }
+
+  elRecentWorkspacesMenu.style.left = `${Math.round(left)}px`;
+  elRecentWorkspacesMenu.style.top = `${Math.round(top)}px`;
+}
+
+function renderRecentWorkspacesMenu(): void {
+  elRecentWorkspacesList.innerHTML = "";
+  const supportsFocusGroup = "focusGroup" in HTMLElement.prototype;
+
+  if (recentWorkspaces.length === 0) {
+    const emptyDiv = document.createElement("div");
+    emptyDiv.className = "recent-menu-empty";
+    emptyDiv.textContent = "最近開いたフォルダはありません";
+    elRecentWorkspacesList.appendChild(emptyDiv);
+    return;
+  }
+
+  for (const dirPath of recentWorkspaces) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "recent-menu-item";
+    if (!supportsFocusGroup) {
+      btn.setAttribute("role", "menuitem");
+    }
+    btn.title = dirPath;
+
+    const isCurrent = dirPath === state.workspacePath;
+
+    const checkSpan = document.createElement("span");
+    checkSpan.className = "recent-menu-item-check";
+    checkSpan.setAttribute("aria-hidden", "true");
+    checkSpan.textContent = isCurrent ? "✓" : "📁";
+
+    const bodyDiv = document.createElement("div");
+    bodyDiv.className = "recent-menu-item-body";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "recent-menu-item-name";
+    nameSpan.textContent = getWorkspaceBasename(dirPath);
+
+    const pathSpan = document.createElement("span");
+    pathSpan.className = "recent-menu-item-path";
+    pathSpan.textContent = dirPath;
+
+    bodyDiv.appendChild(nameSpan);
+    bodyDiv.appendChild(pathSpan);
+
+    btn.appendChild(checkSpan);
+    btn.appendChild(bodyDiv);
+
+    btn.addEventListener("click", async (ev) => {
+      const fromPointer = ev.detail !== 0;
+      closeRecentWorkspacesMenu(true, fromPointer);
+
+      if (state.isDirty && state.currentFilePath) {
+        await saveCurrentFile();
+      }
+      state.currentFilePath = "";
+      const ok = await loadWorkspace(dirPath, { silentError: true });
+      if (!ok) {
+        removeRecentWorkspace(dirPath);
+        const defaultWs = await invoke<string>("get_default_workspace");
+        await loadWorkspace(defaultWs);
+        setStatus(
+          `フォルダが見つかりませんでした (${dirPath})。履歴から削除し、サンプルフォルダを開きました`
+        );
+      }
+    });
+
+    elRecentWorkspacesList.appendChild(btn);
+  }
+
+  const hr = document.createElement("hr");
+  elRecentWorkspacesList.appendChild(hr);
+
+  const btnClear = document.createElement("button");
+  btnClear.type = "button";
+  btnClear.className = "recent-menu-item recent-menu-clear";
+  if (!supportsFocusGroup) {
+    btnClear.setAttribute("role", "menuitem");
+  }
+  btnClear.textContent = "🗑 履歴をクリア";
+  btnClear.addEventListener("click", (ev) => {
+    const fromPointer = ev.detail !== 0;
+    recentWorkspaces = state.workspacePath ? [state.workspacePath] : [];
+    saveRecentWorkspaces();
+    renderRecentWorkspacesMenu();
+    closeRecentWorkspacesMenu(true, fromPointer);
+    setStatus("過去のフォルダ履歴をクリアしました");
+  });
+  elRecentWorkspacesList.appendChild(btnClear);
+}
+
+function setupRecentWorkspacesMenu(): void {
+  renderRecentWorkspacesMenu();
+
+  let enterOnOpen = false;
+  let pointerPressed = false;
+
+  btnRecentWorkspaces.addEventListener("pointerdown", () => {
+    pointerPressed = true;
+  });
+
+  // Fallback for browsers without Invoker Commands (`commandfor` / `command="toggle-popover"`)
+  if (!("commandForElement" in HTMLButtonElement.prototype)) {
+    btnRecentWorkspaces.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const isOpen = elRecentWorkspacesMenu.matches(":popover-open");
+      if (isOpen) {
+        closeRecentWorkspacesMenu(true, pointerPressed);
+      } else {
+        enterOnOpen = !pointerPressed;
+        try {
+          (
+            elRecentWorkspacesMenu as HTMLElement & {
+              showPopover: (opts?: { source?: HTMLElement }) => void;
+            }
+          ).showPopover({ source: btnRecentWorkspaces });
+        } catch (_) {
+          elRecentWorkspacesMenu.showPopover();
+        }
+      }
+      pointerPressed = false;
+    });
+  } else {
+    btnRecentWorkspaces.addEventListener("click", () => {
+      enterOnOpen = !pointerPressed;
+      pointerPressed = false;
+    });
+  }
+
+  btnRecentWorkspaces.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      enterOnOpen = true;
+      if (!elRecentWorkspacesMenu.matches(":popover-open")) {
+        btnRecentWorkspaces.click();
+      } else {
+        const first = elRecentWorkspacesList.querySelector<HTMLButtonElement>("button:not(:disabled)");
+        first?.focus({ preventScroll: true });
+      }
+    }
+  });
+
+  elRecentWorkspacesMenu.addEventListener("toggle", (ev) => {
+    const toggleEv = ev as ToggleEvent;
+    const isOpen = toggleEv.newState === "open";
+    btnRecentWorkspaces.setAttribute("aria-expanded", String(isOpen));
+    if (isOpen) {
+      renderRecentWorkspacesMenu();
+      positionRecentMenuFallback();
+      if (enterOnOpen) {
+        const first = elRecentWorkspacesList.querySelector<HTMLButtonElement>("button:not(:disabled)");
+        first?.focus({ preventScroll: true });
+      }
+      enterOnOpen = false;
+    }
+  });
+
+  // Fallback for browsers without native `focusgroup` (Safari / WKWebView / Firefox)
+  if (!("focusGroup" in HTMLElement.prototype)) {
+    elRecentWorkspacesList.setAttribute("role", "menu");
+    elRecentWorkspacesList.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeRecentWorkspacesMenu(true, false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(ev.key)) return;
+      const items = Array.from(
+        elRecentWorkspacesList.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")
+      );
+      if (items.length === 0) return;
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      let next = 0;
+      if (ev.key === "Home") {
+        next = 0;
+      } else if (ev.key === "End") {
+        next = items.length - 1;
+      } else if (current >= 0) {
+        next = (current + (ev.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
+      }
+      ev.preventDefault();
+      items[next].focus({ preventScroll: true });
+    });
+  }
+}
+
 async function initApp(): Promise<void> {
   bindEvents();
   setupPaneLayoutAndResizers();
+  setupRecentWorkspacesMenu();
   void setupNativeDragDrop();
   try {
+    // 前回最後に開いていたディレクトリがあれば優先して開く
+    const lastDir = recentWorkspaces[0];
+    if (lastDir) {
+      const restored = await loadWorkspace(lastDir, { silentError: true });
+      if (restored) {
+        return;
+      }
+      // 見つからない場合は履歴から取り除き、サンプルディレクトリへフォールバック
+      removeRecentWorkspace(lastDir);
+      const defaultWs = await invoke<string>("get_default_workspace");
+      await loadWorkspace(defaultWs);
+      setStatus(
+        `前回開いていたフォルダ (${lastDir}) が見つからなかったため、サンプルフォルダを開きました`
+      );
+      return;
+    }
+
     const defaultWs = await invoke<string>("get_default_workspace");
     await loadWorkspace(defaultWs);
   } catch (err) {
