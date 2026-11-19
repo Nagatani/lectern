@@ -13,6 +13,8 @@ interface FileEntry {
   path: string;
   rel_path: string;
   is_dir: boolean;
+  can_open: boolean;
+  extension: string | null;
 }
 
 interface DroppedPathInfo {
@@ -608,26 +610,71 @@ function setRenderMode(mode: RenderMode): void {
 }
 
 // ============================================================================
-// Workspace & File Browser Operations
+// Workspace & File Browser Operations (Tree View + Openable / Non-Openable)
 // ============================================================================
+
+const expandedDirs = new Set<string>();
+const dirChildrenCache = new Map<string, FileEntry[]>();
+
+function getFileIcon(entry: FileEntry): string {
+  if (entry.can_open) return "📝";
+  const ext = (entry.extension || "").toLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext)) {
+    return "🖼️";
+  }
+  if (ext === "pdf") return "📑";
+  if (ext === "html" || ext === "htm") return "🌐";
+  if (ext === "css" || ext === "scss") return "🎨";
+  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "📦";
+  if (["mp4", "mov", "webm", "avi", "mp3", "wav", "m4a"].includes(ext)) return "🎬";
+  if (["json", "yaml", "yml", "toml", "xml", "csv"].includes(ext)) return "🧾";
+  return "📄";
+}
+
+function getFileBadgeText(entry: FileEntry): string {
+  if (entry.can_open) return "MD";
+  if (entry.extension) {
+    return entry.extension.toUpperCase().slice(0, 6);
+  }
+  return "非対応";
+}
+
+async function fetchDirectoryEntries(dirPath: string, forceReload = false): Promise<FileEntry[]> {
+  if (!forceReload && dirChildrenCache.has(dirPath)) {
+    return dirChildrenCache.get(dirPath)!;
+  }
+  const entries = await invoke<FileEntry[]>("list_workspace_files", {
+    workspacePath: dirPath,
+  });
+  dirChildrenCache.set(dirPath, entries);
+  return entries;
+}
 
 async function loadWorkspace(workspacePath: string): Promise<void> {
   try {
-    const entries = await invoke<FileEntry[]>("list_workspace_files", {
-      workspacePath,
-    });
+    const isSameWorkspace = state.workspacePath === workspacePath;
+    dirChildrenCache.clear();
+    if (!isSameWorkspace) {
+      expandedDirs.clear();
+    }
+
+    const entries = await fetchDirectoryEntries(workspacePath, true);
     state.workspacePath = workspacePath;
     elWorkspacePathLabel.textContent = workspacePath;
     elWorkspacePathLabel.title = `${workspacePath} (クリックでFinder / エクスプローラー表示)`;
 
     await loadThemes();
     renderFileTree(entries);
-    setStatus(`ディレクトリを開きました: ${workspacePath} (${entries.length} 項目)`);
 
-    // Auto-open the first markdown file if none is open
-    const firstMd = entries.find((e) => !e.is_dir && e.name.endsWith(".md"));
+    const openableCount = entries.filter((e) => !e.is_dir && e.can_open).length;
+    setStatus(
+      `ディレクトリを開きました: ${workspacePath} (${entries.length} 項目 / Markdown ${openableCount} 件)`
+    );
+
+    // Auto-open the first openable markdown file if none is open
+    const firstMd = entries.find((e) => !e.is_dir && e.can_open);
     if (firstMd && !state.currentFilePath) {
-      await openFile(firstMd.path, firstMd.rel_path);
+      await openFile(firstMd.path, firstMd.name);
     }
   } catch (err) {
     setStatus(`フォルダ読み込み失敗: ${String(err)}`);
@@ -660,65 +707,274 @@ async function revealInExplorer(targetPath: string): Promise<void> {
   }
 }
 
-function renderFileTree(entries: FileEntry[]): void {
-  elFileTree.innerHTML = "";
-
-  // 親ディレクトリへ移動する ".." エントリを先頭に配置
-  const parentLi = document.createElement("li");
-  parentLi.className = "file-tree-dir";
-  parentLi.title = "親フォルダへ移動";
-  parentLi.textContent = "📁 .. (上の階層へ)";
-  parentLi.addEventListener("click", () => {
-    void navigateToParentDirectory();
+function updateActiveFileHighlight(): void {
+  const items = elFileTree.querySelectorAll<HTMLLIElement>(".file-tree-item.openable");
+  items.forEach((li) => {
+    const isActive = li.dataset.filePath === state.currentFilePath;
+    li.classList.toggle("active", isActive);
+    const btn = li.querySelector<HTMLButtonElement>(".file-item-main");
+    if (btn) {
+      if (isActive) {
+        btn.setAttribute("aria-current", "true");
+      } else {
+        btn.removeAttribute("aria-current");
+      }
+    }
   });
-  elFileTree.appendChild(parentLi);
+}
+
+function renderEntriesIntoList(
+  container: HTMLUListElement,
+  entries: FileEntry[],
+  depth: number
+): void {
+  container.innerHTML = "";
+
+  if (entries.length === 0) {
+    const emptyLi = document.createElement("li");
+    emptyLi.className = "file-tree-empty";
+    emptyLi.style.setProperty("--tree-depth", String(depth));
+    emptyLi.textContent = "(空のフォルダ)";
+    container.appendChild(emptyLi);
+    return;
+  }
 
   for (const entry of entries) {
-    const li = document.createElement("li");
     if (entry.is_dir) {
-      li.className = "file-tree-dir";
-      li.title = `クリックして「${entry.name}」フォルダを開く`;
-      li.textContent = `📁 ${entry.rel_path}`;
-      li.addEventListener("click", async () => {
+      const li = document.createElement("li");
+      li.className = "file-tree-dir-node";
+      li.setAttribute("role", "treeitem");
+      li.style.setProperty("--tree-depth", String(depth));
+
+      const details = document.createElement("details");
+      details.className = "tree-folder";
+      const isInitiallyOpen = expandedDirs.has(entry.path);
+      if (isInitiallyOpen) {
+        details.open = true;
+      }
+
+      const summary = document.createElement("summary");
+      summary.className = "tree-folder-summary";
+      summary.title = `クリックで展開/折りたたみ · ダブルクリックで「${entry.name}」をルート表示`;
+
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "tree-folder-icon";
+      iconSpan.setAttribute("aria-hidden", "true");
+      iconSpan.textContent = isInitiallyOpen ? "📂" : "📁";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "file-item-name";
+      nameSpan.textContent = entry.name;
+
+      summary.appendChild(iconSpan);
+      summary.appendChild(nameSpan);
+
+      const childrenUl = document.createElement("ul");
+      childrenUl.className = "file-tree-children";
+      childrenUl.setAttribute("role", "group");
+
+      let childrenLoaded = false;
+      const loadAndRenderChildren = async () => {
+        if (childrenLoaded) return;
+        childrenLoaded = true;
+        childrenUl.innerHTML = "";
+        const loadingLi = document.createElement("li");
+        loadingLi.className = "file-tree-empty";
+        loadingLi.style.setProperty("--tree-depth", String(depth + 1));
+        loadingLi.textContent = "読み込み中...";
+        childrenUl.appendChild(loadingLi);
+
+        try {
+          const childEntries = await fetchDirectoryEntries(entry.path);
+          renderEntriesIntoList(childrenUl, childEntries, depth + 1);
+        } catch (err) {
+          childrenLoaded = false;
+          childrenUl.innerHTML = "";
+          const errLi = document.createElement("li");
+          errLi.className = "file-tree-empty";
+          errLi.style.setProperty("--tree-depth", String(depth + 1));
+          errLi.textContent = "読み込み失敗";
+          childrenUl.appendChild(errLi);
+          setStatus(`サブフォルダ読み込みエラー: ${String(err)}`);
+        }
+      };
+
+      details.addEventListener("toggle", () => {
+        if (details.open) {
+          expandedDirs.add(entry.path);
+          iconSpan.textContent = "📂";
+          void loadAndRenderChildren();
+        } else {
+          expandedDirs.delete(entry.path);
+          iconSpan.textContent = "📁";
+        }
+      });
+
+      summary.addEventListener("dblclick", async (ev) => {
+        ev.preventDefault();
         if (state.isDirty && state.currentFilePath) {
           await saveCurrentFile();
         }
         await loadWorkspace(entry.path);
       });
-      elFileTree.appendChild(li);
+
+      details.appendChild(summary);
+      details.appendChild(childrenUl);
+
+      // Sibling action button (kept outside <summary> for accessible semantics)
+      const btnFocusDir = document.createElement("button");
+      btnFocusDir.type = "button";
+      btnFocusDir.className = "tree-dir-focus-btn";
+      btnFocusDir.title = `「${entry.name}」をルートフォルダとして開く`;
+      btnFocusDir.setAttribute("aria-label", `${entry.name} をルートフォルダとして開く`);
+      btnFocusDir.textContent = "↪";
+      btnFocusDir.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (state.isDirty && state.currentFilePath) {
+          await saveCurrentFile();
+        }
+        await loadWorkspace(entry.path);
+      });
+
+      li.appendChild(details);
+      li.appendChild(btnFocusDir);
+      container.appendChild(li);
+
+      if (isInitiallyOpen) {
+        void loadAndRenderChildren();
+      }
       continue;
     }
 
-    li.className = "file-tree-item";
-    if (entry.path === state.currentFilePath) {
-      li.classList.add("active");
+    const li = document.createElement("li");
+    li.dataset.filePath = entry.path;
+    li.setAttribute("role", "treeitem");
+    li.style.setProperty("--tree-depth", String(depth));
+
+    if (entry.can_open) {
+      li.className = "file-tree-item openable";
+      const isActive = entry.path === state.currentFilePath;
+      if (isActive) {
+        li.classList.add("active");
+      }
+
+      const mainBtn = document.createElement("button");
+      mainBtn.type = "button";
+      mainBtn.className = "file-item-main";
+      mainBtn.title = `${entry.name} をエディタで開く`;
+      if (isActive) {
+        mainBtn.setAttribute("aria-current", "true");
+      }
+
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "file-item-icon";
+      iconSpan.setAttribute("aria-hidden", "true");
+      iconSpan.textContent = getFileIcon(entry);
+
+      const spanName = document.createElement("span");
+      spanName.className = "file-item-name";
+      spanName.textContent = entry.name;
+
+      const badge = document.createElement("span");
+      badge.className = "file-ext-badge ext-openable";
+      badge.textContent = getFileBadgeText(entry);
+
+      mainBtn.appendChild(iconSpan);
+      mainBtn.appendChild(spanName);
+      mainBtn.appendChild(badge);
+      mainBtn.addEventListener("click", async () => {
+        if (state.isDirty && state.currentFilePath) {
+          await saveCurrentFile();
+        }
+        await openFile(entry.path, entry.name);
+      });
+
+      const btnDel = document.createElement("button");
+      btnDel.type = "button";
+      btnDel.className = "file-delete-btn";
+      btnDel.title = "ファイルを削除";
+      btnDel.setAttribute("aria-label", `${entry.name} を削除`);
+      btnDel.textContent = "🗑";
+      btnDel.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        await deleteFile(entry.path, entry.name);
+      });
+
+      li.appendChild(mainBtn);
+      li.appendChild(btnDel);
+    } else {
+      li.className = "file-tree-item unopenable";
+      li.setAttribute("aria-disabled", "true");
+
+      const mainDiv = document.createElement("div");
+      mainDiv.className = "file-item-main file-item-readonly";
+      const extLabel = entry.extension ? `.${entry.extension}` : "拡張子なし";
+      mainDiv.title = `${entry.name} (${extLabel} はエディタで開けません · 右の ↗ でFinder/エクスプローラー表示)`;
+
+      const iconSpan = document.createElement("span");
+      iconSpan.className = "file-item-icon";
+      iconSpan.setAttribute("aria-hidden", "true");
+      iconSpan.textContent = getFileIcon(entry);
+
+      const spanName = document.createElement("span");
+      spanName.className = "file-item-name";
+      spanName.textContent = entry.name;
+
+      const badge = document.createElement("span");
+      badge.className = "file-ext-badge ext-unopenable";
+      badge.textContent = getFileBadgeText(entry);
+
+      mainDiv.appendChild(iconSpan);
+      mainDiv.appendChild(spanName);
+      mainDiv.appendChild(badge);
+      mainDiv.addEventListener("click", () => {
+        setStatus(
+          `「${entry.name}」(${extLabel}) はMarkdownエディタでは開けません（右の ↗ でFinder / エクスプローラー表示できます）`
+        );
+      });
+
+      const btnReveal = document.createElement("button");
+      btnReveal.type = "button";
+      btnReveal.className = "file-reveal-btn";
+      btnReveal.title = "Finder / エクスプローラーで表示";
+      btnReveal.setAttribute("aria-label", `${entry.name} をFinder/エクスプローラーで表示`);
+      btnReveal.textContent = "↗";
+      btnReveal.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        void revealInExplorer(entry.path);
+      });
+
+      li.appendChild(mainDiv);
+      li.appendChild(btnReveal);
     }
 
-    const spanName = document.createElement("span");
-    spanName.className = "file-item-name";
-    spanName.textContent = `📝 ${entry.rel_path}`;
+    container.appendChild(li);
+  }
+}
 
-    const btnDel = document.createElement("button");
-    btnDel.type = "button";
-    btnDel.className = "file-delete-btn";
-    btnDel.title = "ファイルを削除";
-    btnDel.textContent = "🗑";
-    btnDel.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      await deleteFile(entry.path, entry.rel_path);
-    });
+function renderFileTree(entries: FileEntry[]): void {
+  elFileTree.innerHTML = "";
 
-    li.appendChild(spanName);
-    li.appendChild(btnDel);
+  // 親ディレクトリへ移動する ".." エントリを先頭に配置
+  const parentLi = document.createElement("li");
+  parentLi.className = "file-tree-parent-item";
+  parentLi.setAttribute("role", "treeitem");
 
-    li.addEventListener("click", async () => {
-      if (state.isDirty && state.currentFilePath) {
-        await saveCurrentFile();
-      }
-      await openFile(entry.path, entry.rel_path);
-    });
+  const parentBtn = document.createElement("button");
+  parentBtn.type = "button";
+  parentBtn.className = "file-tree-parent-btn";
+  parentBtn.title = "親フォルダへ移動";
+  parentBtn.textContent = "📁 .. (上の階層へ)";
+  parentBtn.addEventListener("click", () => {
+    void navigateToParentDirectory();
+  });
+  parentLi.appendChild(parentBtn);
+  elFileTree.appendChild(parentLi);
 
-    elFileTree.appendChild(li);
+  const fragmentList = document.createElement("ul");
+  renderEntriesIntoList(fragmentList, entries, 0);
+  while (fragmentList.firstChild) {
+    elFileTree.appendChild(fragmentList.firstChild);
   }
 }
 
@@ -736,11 +992,8 @@ async function openFile(filePath: string, displayName: string): Promise<void> {
     markDirty(false);
     updateLineNumbersAndStats();
 
-    // Update active state in tree
-    const entries = await invoke<FileEntry[]>("list_workspace_files", {
-      workspacePath: state.workspacePath,
-    });
-    renderFileTree(entries);
+    // Update active state in tree in-place (preserving expanded folders & scroll)
+    updateActiveFileHighlight();
 
     await compileCurrentMarkdown();
     setStatus(`ファイルを開きました: ${displayName}`);

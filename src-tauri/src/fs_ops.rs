@@ -8,6 +8,8 @@ pub struct FileEntry {
     pub path: String,
     pub rel_path: String,
     pub is_dir: bool,
+    pub can_open: bool,
+    pub extension: Option<String>,
 }
 
 /// プロジェクト同梱の `sample-lectures` またはユーザーの Documents/LectureMD-Studio をデフォルトワークスペースとして返す
@@ -34,7 +36,8 @@ pub fn resolve_default_workspace() -> PathBuf {
     user_ws
 }
 
-/// 指定ディレクトリ直下のサブフォルダおよび `.md` ファイルを走査して返す
+/// 指定ディレクトリ直下のサブフォルダおよびすべての通常ファイルを走査して返す
+/// Markdown (`.md` / `.markdown`) のみ `can_open = true` とする
 pub fn list_markdown_workspace(workspace_path: &Path) -> Result<Vec<FileEntry>, String> {
     if !workspace_path.exists() {
         return Err(format!(
@@ -46,6 +49,13 @@ pub fn list_markdown_workspace(workspace_path: &Path) -> Result<Vec<FileEntry>, 
     let mut entries = Vec::new();
     collect_entries(workspace_path, &mut entries)?;
     Ok(entries)
+}
+
+fn is_openable_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+        .unwrap_or(false)
 }
 
 fn collect_entries(current: &Path, out: &mut Vec<FileEntry>) -> Result<(), String> {
@@ -75,36 +85,40 @@ fn collect_entries(current: &Path, out: &mut Vec<FileEntry>) -> Result<(), Strin
 
         if path.is_dir() {
             dirs.push((file_name, path));
-        } else if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
-            .unwrap_or(false)
-        {
-            files.push((file_name, path));
+        } else if path.is_file() {
+            let can_open = is_openable_markdown(&path);
+            let extension = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.to_lowercase());
+            files.push((file_name, path, can_open, extension));
         }
     }
 
     dirs.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
     files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
-    // ディレクトリを先頭に配置（クリックでそのディレクトリを開けるようにする）
+    // ディレクトリを先頭に配置
     for (name, path) in dirs {
         out.push(FileEntry {
             name: name.clone(),
             path: path.to_string_lossy().to_string(),
             rel_path: name,
             is_dir: true,
+            can_open: false,
+            extension: None,
         });
     }
 
-    // Markdownファイルを続けて配置
-    for (name, path) in files {
+    // すべてのファイル（開ける Markdown と開けないファイルの両方）を続けて配置
+    for (name, path, can_open, extension) in files {
         out.push(FileEntry {
             name: name.clone(),
             path: path.to_string_lossy().to_string(),
             rel_path: name,
             is_dir: false,
+            can_open,
+            extension,
         });
     }
 
@@ -162,4 +176,46 @@ pub fn remove_markdown_file(file_path: &Path) -> Result<(), String> {
     }
     fs::remove_file(file_path)
         .map_err(|e| format!("ファイルの削除に失敗しました: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_openable_and_non_openable_files_and_dirs() {
+        let tmp = std::env::temp_dir().join(format!(
+            "lectern_fs_ops_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("sub_folder")).unwrap();
+        fs::write(tmp.join("01_intro.md"), "# Intro").unwrap();
+        fs::write(tmp.join("02_notes.MARKDOWN"), "# Notes").unwrap();
+        fs::write(tmp.join("diagram.png"), b"png").unwrap();
+        fs::write(tmp.join("handout.pdf"), b"pdf").unwrap();
+        fs::write(tmp.join(".hidden.md"), "hidden").unwrap();
+
+        let entries = list_markdown_workspace(&tmp).unwrap();
+        let _ = fs::remove_dir_all(&tmp);
+
+        assert_eq!(entries.len(), 5);
+        assert!(entries[0].is_dir && entries[0].name == "sub_folder" && !entries[0].can_open);
+
+        let intro = entries.iter().find(|e| e.name == "01_intro.md").unwrap();
+        assert!(intro.can_open);
+        assert_eq!(intro.extension.as_deref(), Some("md"));
+
+        let notes = entries.iter().find(|e| e.name == "02_notes.MARKDOWN").unwrap();
+        assert!(notes.can_open);
+        assert_eq!(notes.extension.as_deref(), Some("markdown"));
+
+        let png = entries.iter().find(|e| e.name == "diagram.png").unwrap();
+        assert!(!png.can_open);
+        assert_eq!(png.extension.as_deref(), Some("png"));
+
+        let pdf = entries.iter().find(|e| e.name == "handout.pdf").unwrap();
+        assert!(!pdf.can_open);
+        assert_eq!(pdf.extension.as_deref(), Some("pdf"));
+    }
 }

@@ -468,45 +468,155 @@ body.is-resizing * {
   flex: 1;
 }
 
+.file-tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+.file-tree-parent-item {
+  margin-bottom: 2px;
+}
+
+.file-tree-parent-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-tree-parent-btn:hover {
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+}
+
+/* Tree Folder Node (<details> + <summary>) */
+.file-tree-dir-node {
+  position: relative;
+}
+
+.tree-folder {
+  display: block;
+}
+
+.tree-folder-summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 28px 5px calc(8px + var(--tree-depth, 0) * 14px);
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.tree-folder-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tree-folder-summary::before {
+  content: "▸";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.14s ease, color 0.14s ease;
+}
+
+.tree-folder[open] > .tree-folder-summary::before {
+  transform: rotate(90deg);
+  color: var(--brand);
+}
+
+.tree-folder-summary:hover {
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+}
+
+.tree-folder-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.tree-dir-focus-btn {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  opacity: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 4px;
+  transition: opacity 0.12s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+.file-tree-dir-node:hover > .tree-dir-focus-btn,
+.tree-dir-focus-btn:focus-visible {
+  opacity: 0.85;
+}
+
+.tree-dir-focus-btn:hover {
+  opacity: 1 !important;
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+}
+
+/* Tree File Items (Openable vs Unopenable differentiation) */
 .file-tree-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding-left: calc(20px + var(--tree-depth, 0) * 14px);
+  padding-right: 4px;
   border-radius: 6px;
   font-size: 12.5px;
-  cursor: pointer;
   user-select: none;
-  color: var(--text-primary);
+  transition: background-color 0.12s ease;
 }
 
-.file-tree-item:hover {
-  background-color: var(--bg-elevated);
-}
-
-.file-tree-item.active {
-  background-color: var(--brand);
-  color: var(--brand-text);
-  font-weight: 600;
-}
-
-.file-tree-dir {
+.file-item-main {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
-  color: var(--text-primary);
-  padding: 6px 8px;
-  border-radius: 6px;
-  font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-align: left;
   cursor: pointer;
-  user-select: none;
 }
 
-.file-tree-dir:hover {
-  background-color: var(--bg-elevated);
-  color: var(--brand);
+.file-item-icon {
+  flex-shrink: 0;
+  font-size: 13px;
 }
 
 .file-item-name {
@@ -516,24 +626,106 @@ body.is-resizing * {
   flex: 1;
 }
 
-.file-delete-btn {
+/* Openable (Markdown) files: crisp, interactive, primary contrast */
+.file-tree-item.openable {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.file-tree-item.openable:hover {
+  background-color: var(--bg-elevated);
+}
+
+.file-tree-item.openable.active {
+  background-color: var(--brand);
+  color: var(--brand-text);
+  font-weight: 600;
+}
+
+/* Unopenable (Non-Markdown) files: muted, non-interactive, distinct badge */
+.file-tree-item.unopenable {
+  color: var(--text-muted);
+  opacity: 0.68;
+}
+
+.file-tree-item.unopenable .file-item-readonly {
+  cursor: default;
+}
+
+.file-tree-item.unopenable:hover {
+  background-color: color-mix(in srgb, var(--bg-elevated) 60%, transparent);
+  opacity: 0.85;
+}
+
+.file-ext-badge {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.file-ext-badge.ext-openable {
+  background-color: color-mix(in srgb, var(--brand) 14%, transparent);
+  color: var(--brand);
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+.file-tree-item.openable.active .file-ext-badge.ext-openable {
+  background-color: rgba(255, 255, 255, 0.22);
+  color: var(--brand-text);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.file-ext-badge.ext-unopenable {
+  background-color: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-color);
+  font-weight: 500;
+}
+
+.file-delete-btn,
+.file-reveal-btn {
   opacity: 0;
   border: none;
   background: transparent;
   color: inherit;
   cursor: pointer;
   font-size: 12px;
-  padding: 2px 4px;
+  padding: 3px 5px;
   border-radius: 4px;
+  flex-shrink: 0;
+  transition: opacity 0.12s ease, background-color 0.12s ease;
 }
 
-.file-tree-item:hover .file-delete-btn {
-  opacity: 0.75;
+.file-tree-item:hover .file-delete-btn,
+.file-tree-item:hover .file-reveal-btn,
+.file-delete-btn:focus-visible,
+.file-reveal-btn:focus-visible {
+  opacity: 0.8;
 }
 
 .file-delete-btn:hover {
   opacity: 1 !important;
   background-color: rgba(239, 68, 68, 0.2);
+}
+
+.file-reveal-btn:hover {
+  opacity: 1 !important;
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+}
+
+.file-tree-empty {
+  padding: 4px 8px 4px calc(24px + var(--tree-depth, 0) * 14px);
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-muted);
+  opacity: 0.75;
+  user-select: none;
 }
 
 /* Editor Pane */
