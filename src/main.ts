@@ -88,6 +88,17 @@ const elStatusMessage = document.getElementById("status-message") as HTMLDivElem
 const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLSpanElement;
 const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HTMLStyleElement;
 
+const elWorkspaceGrid = document.getElementById("workspace-grid") as HTMLElement;
+const elPaneSidebar = document.getElementById("pane-sidebar") as HTMLElement;
+const elResizerSidebar = document.getElementById("resizer-sidebar") as HTMLDivElement;
+const elResizerPreview = document.getElementById("resizer-preview") as HTMLDivElement;
+const elPanePreview = document.getElementById("pane-preview") as HTMLElement;
+
+const btnToggleSidebar = document.getElementById("btn-toggle-sidebar") as HTMLButtonElement;
+const btnTogglePreview = document.getElementById("btn-toggle-preview") as HTMLButtonElement;
+const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButtonElement;
+const btnClosePreview = document.getElementById("btn-close-preview") as HTMLButtonElement;
+
 const btnOpenFolder = document.getElementById("btn-open-folder") as HTMLButtonElement;
 const btnNewFile = document.getElementById("btn-new-file") as HTMLButtonElement;
 const btnSaveFile = document.getElementById("btn-save-file") as HTMLButtonElement;
@@ -1119,8 +1130,241 @@ async function setupNativeDragDrop(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Resizable Split Panes & Pane Visibility Toggles (with localStorage persistence)
+// ============================================================================
+
+const LAYOUT_STORAGE_KEY = "lectern-pane-layout-v1";
+
+interface PaneLayoutState {
+  sidebarVisible: boolean;
+  previewVisible: boolean;
+  sidebarWidthPx: number;
+  previewWidthPct: number;
+}
+
+const DEFAULT_LAYOUT: PaneLayoutState = {
+  sidebarVisible: true,
+  previewVisible: true,
+  sidebarWidthPx: 240,
+  previewWidthPct: 48,
+};
+
+const layoutState: PaneLayoutState = loadLayoutState();
+
+function loadLayoutState(): PaneLayoutState {
+  try {
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PaneLayoutState>;
+      return {
+        sidebarVisible: parsed.sidebarVisible ?? DEFAULT_LAYOUT.sidebarVisible,
+        previewVisible: parsed.previewVisible ?? DEFAULT_LAYOUT.previewVisible,
+        sidebarWidthPx:
+          typeof parsed.sidebarWidthPx === "number"
+            ? Math.min(520, Math.max(160, parsed.sidebarWidthPx))
+            : DEFAULT_LAYOUT.sidebarWidthPx,
+        previewWidthPct:
+          typeof parsed.previewWidthPct === "number"
+            ? Math.min(78, Math.max(20, parsed.previewWidthPct))
+            : DEFAULT_LAYOUT.previewWidthPct,
+      };
+    }
+  } catch (_) {}
+  return { ...DEFAULT_LAYOUT };
+}
+
+function saveLayoutState(): void {
+  try {
+    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layoutState));
+  } catch (_) {}
+}
+
+function applyLayoutState(): void {
+  elPaneSidebar.hidden = !layoutState.sidebarVisible;
+  elResizerSidebar.hidden = !layoutState.sidebarVisible;
+
+  elPanePreview.hidden = !layoutState.previewVisible;
+  elResizerPreview.hidden = !layoutState.previewVisible;
+
+  elWorkspaceGrid.style.setProperty("--sidebar-width", `${Math.round(layoutState.sidebarWidthPx)}px`);
+  elWorkspaceGrid.style.setProperty(
+    "--preview-width",
+    `${layoutState.previewWidthPct.toFixed(2)}%`
+  );
+
+  btnToggleSidebar.classList.toggle("active", layoutState.sidebarVisible);
+  btnToggleSidebar.setAttribute("aria-pressed", String(layoutState.sidebarVisible));
+
+  btnTogglePreview.classList.toggle("active", layoutState.previewVisible);
+  btnTogglePreview.setAttribute("aria-pressed", String(layoutState.previewVisible));
+}
+
+function toggleSidebarVisibility(force?: boolean): void {
+  layoutState.sidebarVisible = force ?? !layoutState.sidebarVisible;
+  applyLayoutState();
+  saveLayoutState();
+  setStatus(
+    layoutState.sidebarVisible
+      ? "ファイルエクスプローラーを表示しました"
+      : "ファイルエクスプローラーを非表示にしました"
+  );
+}
+
+function togglePreviewVisibility(force?: boolean): void {
+  const wasHidden = !layoutState.previewVisible;
+  layoutState.previewVisible = force ?? !layoutState.previewVisible;
+  applyLayoutState();
+  saveLayoutState();
+  if (wasHidden && layoutState.previewVisible) {
+    void compileCurrentMarkdown(false);
+  }
+  setStatus(
+    layoutState.previewVisible
+      ? "プレビューウィンドウを表示しました"
+      : "プレビューウィンドウを非表示にしました"
+  );
+}
+
+function setupPaneLayoutAndResizers(): void {
+  applyLayoutState();
+
+  // Toggle & Close buttons
+  btnToggleSidebar.addEventListener("click", () => toggleSidebarVisibility());
+  btnCloseSidebar.addEventListener("click", () => toggleSidebarVisibility(false));
+
+  btnTogglePreview.addEventListener("click", () => togglePreviewVisibility());
+  btnClosePreview.addEventListener("click", () => togglePreviewVisibility(false));
+
+  // Global keyboard shortcuts: Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview)
+  window.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+      if (e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebarVisibility();
+      } else if (e.key === "\\") {
+        e.preventDefault();
+        togglePreviewVisibility();
+      }
+    }
+  });
+
+  // 1. Left Resizer (Sidebar width in px)
+  let draggingSidebar = false;
+  elResizerSidebar.addEventListener("pointerdown", (e) => {
+    draggingSidebar = true;
+    elResizerSidebar.classList.add("dragging");
+    document.body.classList.add("is-resizing");
+    elResizerSidebar.setPointerCapture(e.pointerId);
+  });
+
+  elResizerSidebar.addEventListener("pointermove", (e) => {
+    if (!draggingSidebar) return;
+    const gridRect = elWorkspaceGrid.getBoundingClientRect();
+    const previewActualW = layoutState.previewVisible
+      ? elPanePreview.getBoundingClientRect().width
+      : 0;
+    const maxAllowed = Math.min(520, Math.max(160, gridRect.width - previewActualW - 260));
+    const nextWidth = Math.min(maxAllowed, Math.max(160, e.clientX - gridRect.left));
+    layoutState.sidebarWidthPx = nextWidth;
+    elWorkspaceGrid.style.setProperty("--sidebar-width", `${Math.round(nextWidth)}px`);
+  });
+
+  const endSidebarDrag = () => {
+    if (!draggingSidebar) return;
+    draggingSidebar = false;
+    elResizerSidebar.classList.remove("dragging");
+    document.body.classList.remove("is-resizing");
+    saveLayoutState();
+  };
+  elResizerSidebar.addEventListener("pointerup", endSidebarDrag);
+  elResizerSidebar.addEventListener("pointercancel", endSidebarDrag);
+
+  elResizerSidebar.addEventListener("dblclick", () => {
+    layoutState.sidebarWidthPx = DEFAULT_LAYOUT.sidebarWidthPx;
+    applyLayoutState();
+    saveLayoutState();
+    setStatus("ファイル一覧の幅をデフォルトにリセットしました");
+  });
+
+  elResizerSidebar.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      layoutState.sidebarWidthPx = Math.max(160, layoutState.sidebarWidthPx - 20);
+      applyLayoutState();
+      saveLayoutState();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      layoutState.sidebarWidthPx = Math.min(520, layoutState.sidebarWidthPx + 20);
+      applyLayoutState();
+      saveLayoutState();
+    }
+  });
+
+  // 2. Right Resizer (Preview width in %)
+  let draggingPreview = false;
+  elResizerPreview.addEventListener("pointerdown", (e) => {
+    draggingPreview = true;
+    elResizerPreview.classList.add("dragging");
+    document.body.classList.add("is-resizing");
+    elResizerPreview.setPointerCapture(e.pointerId);
+  });
+
+  elResizerPreview.addEventListener("pointermove", (e) => {
+    if (!draggingPreview) return;
+    const gridRect = elWorkspaceGrid.getBoundingClientRect();
+    if (gridRect.width <= 0) return;
+
+    const sidebarActualW = layoutState.sidebarVisible
+      ? elPaneSidebar.getBoundingClientRect().width
+      : 0;
+    const minPreviewPx = 260;
+    const maxPreviewPx = Math.max(minPreviewPx, gridRect.width - sidebarActualW - 260);
+    const desiredPx = Math.min(maxPreviewPx, Math.max(minPreviewPx, gridRect.right - e.clientX));
+    const pct = (desiredPx / gridRect.width) * 100;
+
+    layoutState.previewWidthPct = Math.min(78, Math.max(20, pct));
+    elWorkspaceGrid.style.setProperty(
+      "--preview-width",
+      `${layoutState.previewWidthPct.toFixed(2)}%`
+    );
+  });
+
+  const endPreviewDrag = () => {
+    if (!draggingPreview) return;
+    draggingPreview = false;
+    elResizerPreview.classList.remove("dragging");
+    document.body.classList.remove("is-resizing");
+    saveLayoutState();
+  };
+  elResizerPreview.addEventListener("pointerup", endPreviewDrag);
+  elResizerPreview.addEventListener("pointercancel", endPreviewDrag);
+
+  elResizerPreview.addEventListener("dblclick", () => {
+    layoutState.previewWidthPct = DEFAULT_LAYOUT.previewWidthPct;
+    applyLayoutState();
+    saveLayoutState();
+    setStatus("プレビューの幅をデフォルトにリセットしました");
+  });
+
+  elResizerPreview.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      layoutState.previewWidthPct = Math.min(78, layoutState.previewWidthPct + 3);
+      applyLayoutState();
+      saveLayoutState();
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      layoutState.previewWidthPct = Math.max(20, layoutState.previewWidthPct - 3);
+      applyLayoutState();
+      saveLayoutState();
+    }
+  });
+}
+
 async function initApp(): Promise<void> {
   bindEvents();
+  setupPaneLayoutAndResizers();
   void setupNativeDragDrop();
   try {
     const defaultWs = await invoke<string>("get_default_workspace");

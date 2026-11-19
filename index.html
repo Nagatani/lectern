@@ -94,28 +94,60 @@
         <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
         <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
         <div class="quick-bar-spacer"></div>
+        <div class="pane-toggle-group" role="group" aria-label="パネル表示切替">
+          <button
+            type="button"
+            id="btn-toggle-sidebar"
+            class="chip-btn chip-toggle active"
+            aria-pressed="true"
+            title="ファイルエクスプローラーの表示/非表示 (Cmd+B / Ctrl+B)"
+          >
+            ◧ ファイル一覧
+          </button>
+          <button
+            type="button"
+            id="btn-toggle-preview"
+            class="chip-btn chip-toggle active"
+            aria-pressed="true"
+            title="プレビューの表示/非表示 (Cmd+\ / Ctrl+\)"
+          >
+            👁️ プレビュー
+          </button>
+        </div>
         <span id="current-file-indicator" class="file-indicator">未選択</span>
         <span id="save-status-badge" class="status-badge saved">Saved</span>
       </div>
 
-      <!-- Main 3-Pane Workspace -->
-      <main class="workspace-grid">
+      <!-- Main 3-Pane Workspace (Resizable Split Panes) -->
+      <main id="workspace-grid" class="workspace-grid">
         <!-- Left Pane: File Browser -->
-        <aside class="sidebar" aria-label="ファイルブラウザ">
+        <aside id="pane-sidebar" class="sidebar" aria-label="ファイルブラウザ">
           <div class="sidebar-header">
             <span class="sidebar-title">📁 ファイル一覧</span>
             <div class="sidebar-actions">
               <button type="button" id="btn-parent-dir" class="btn btn-icon btn-sm" aria-label="親フォルダへ移動" title="上の階層（親ディレクトリ）へ移動">⬆️</button>
               <button type="button" id="btn-reveal-explorer" class="btn btn-icon btn-sm" aria-label="エクスプローラーで開く" title="現在のフォルダをFinder / エクスプローラーで開く">↗</button>
               <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-sm" aria-label="ツリー更新" title="再読み込み">↻</button>
+              <button type="button" id="btn-close-sidebar" class="btn btn-icon btn-sm" aria-label="ファイル一覧を隠す" title="ファイル一覧を非表示">✕</button>
             </div>
           </div>
           <div id="workspace-path-label" class="workspace-path" title="現在のワークスペース（クリックでFinder / エクスプローラー表示）"></div>
           <ul id="file-tree" class="file-tree" role="tree" aria-label="講義資料ファイルツリー"></ul>
         </aside>
 
+        <!-- Left Resizer -->
+        <div
+          id="resizer-sidebar"
+          class="pane-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="ファイル一覧の幅を調整（ダブルクリックでリセット）"
+          title="ドラッグで幅を調整 / ダブルクリックでリセット"
+          tabindex="0"
+        ></div>
+
         <!-- Center Pane: Markdown Editor -->
-        <section class="editor-pane" aria-label="マークダウンエディタ">
+        <section id="pane-editor" class="editor-pane" aria-label="マークダウンエディタ">
           <div class="pane-header">
             <span>✏️ Markdown エディタ</span>
             <span id="editor-stats" class="pane-meta">0 行 · 0 文字</span>
@@ -132,14 +164,28 @@
           </div>
         </section>
 
+        <!-- Right Resizer -->
+        <div
+          id="resizer-preview"
+          class="pane-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="プレビューの幅を調整（ダブルクリックでリセット）"
+          title="ドラッグで幅を調整 / ダブルクリックでリセット"
+          tabindex="0"
+        ></div>
+
         <!-- Right Pane: Live Preview -->
-        <section class="preview-pane" aria-label="リアルタイムプレビュー">
+        <section id="pane-preview" class="preview-pane" aria-label="リアルタイムプレビュー">
           <div class="pane-header">
             <span id="preview-title">👁️ プレビュー (ドキュメント形式)</span>
-            <span id="compile-time" class="pane-meta">Rust Engine Ready</span>
+            <div class="pane-header-right">
+              <span id="compile-time" class="pane-meta">Rust Engine Ready</span>
+              <button type="button" id="btn-close-preview" class="btn btn-icon btn-sm" aria-label="プレビューを隠す" title="プレビューを非表示">✕</button>
+            </div>
           </div>
           <div id="preview-viewport" class="preview-viewport mode-document">
-            <article id="preview-content" class="lecture-render-root" data-lecture-theme="default"></article>
+            <article id="preview-content" class="lecture-render-root" data-lecture-theme="handout"></article>
           </div>
         </section>
       </main>
