@@ -792,5 +792,12 @@ let ptr = **x;
         assert!(res.html.contains("関数<code>foo()</code>と<code>「バー」</code>を呼ぶ。"), "html={}", res.html);
         assert!(res.html.contains("<code>**not bold**</code>"), "html={}", res.html);
         assert!(!res.html.contains("<strong>not bold</strong>"), "html={}", res.html);
+
+        // チェックボックス（タスクリスト）が disabled なしでインタラクティブに出力されること
+        let task_md = "- [ ] 未確認項目\n- [x] 確認済み項目\n";
+        let task_res = compile_lecture_markdown(task_md, "document");
+        assert!(task_res.html.contains(r#"<input type="checkbox" class="task-list-checkbox" />"#));
+        assert!(task_res.html.contains(r#"<input type="checkbox" class="task-list-checkbox" checked />"#));
+        assert!(!task_res.html.contains("disabled"));
     }
 }

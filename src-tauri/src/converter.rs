@@ -825,6 +825,15 @@ fn render_markdown_chunk(
                 );
                 events.push(Event::Html(html.into()));
             }
+            Event::TaskListMarker(checked) => {
+                // HTML上でドキュメントを読みながら直接チェックを入れられるよう disabled を付けない
+                let html = if checked {
+                    r#"<input type="checkbox" class="task-list-checkbox" checked /> "#
+                } else {
+                    r#"<input type="checkbox" class="task-list-checkbox" /> "#
+                };
+                events.push(Event::Html(html.into()));
+            }
             other => events.push(other),
         }
     }
@@ -1094,6 +1103,72 @@ pub fn build_standalone_html_with_base_dir(
     th, td {{ border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }}
     th {{ background: #f1f5f9; font-weight: 700; }}
     .math-display {{ margin: 14px 0; text-align: center; overflow-x: auto; }}
+    /* Task List Interactive Checkboxes (Theme-aware custom styling) */
+    .lecture-render-root ul:has(> li > input.task-list-checkbox) {{
+      padding-left: 0.4rem !important;
+    }}
+    .lecture-render-root li:has(> input.task-list-checkbox) {{
+      list-style: none !important;
+      padding-left: 0 !important;
+      margin-bottom: 0.55rem;
+    }}
+    .lecture-render-root input.task-list-checkbox {{
+      --cb-size: 1.3em;
+      --cb-icon-size: 0.8em;
+      --cb-radius: 0.28em;
+      --cb-border: #64748b;
+      --cb-bg: #ffffff;
+      --cb-checked-bg: #2563eb;
+      --cb-check-color: #ffffff;
+      --cb-icon-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'></polyline></svg>");
+      appearance: none;
+      -webkit-appearance: none;
+      display: inline-grid;
+      place-content: center;
+      inline-size: var(--cb-size);
+      block-size: var(--cb-size);
+      margin: 0 0.55em 0 0;
+      vertical-align: -0.22em;
+      border: 2px solid var(--cb-border);
+      border-radius: var(--cb-radius);
+      background-color: var(--cb-bg);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background-color 140ms ease, border-color 140ms ease;
+    }}
+    .lecture-render-root input.task-list-checkbox::before {{
+      content: "";
+      inline-size: var(--cb-icon-size);
+      block-size: var(--cb-icon-size);
+      background-color: var(--cb-check-color);
+      -webkit-mask: var(--cb-icon-check) no-repeat center / contain;
+      mask: var(--cb-icon-check) no-repeat center / contain;
+      transform: scale(0);
+    }}
+    @media (prefers-reduced-motion: no-preference) {{
+      .lecture-render-root input.task-list-checkbox::before {{
+        transition: transform 140ms ease;
+      }}
+    }}
+    @media (forced-colors: active) {{
+      .lecture-render-root input.task-list-checkbox::before {{
+        background-color: CanvasText;
+      }}
+    }}
+    .lecture-render-root input.task-list-checkbox:checked {{
+      background-color: var(--cb-checked-bg);
+      border-color: var(--cb-checked-bg);
+    }}
+    .lecture-render-root input.task-list-checkbox:checked::before {{
+      transform: scale(1);
+    }}
+    .lecture-render-root input.task-list-checkbox:focus-visible {{
+      outline: 2.5px solid var(--cb-checked-bg);
+      outline-offset: 2px;
+    }}
+    .lecture-render-root li:has(> input.task-list-checkbox:checked) {{
+      opacity: 0.72;
+    }}
     .mermaid-container {{
       margin: 16px 0;
       display: block;

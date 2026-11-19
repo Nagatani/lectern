@@ -478,6 +478,15 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   color: #555555 !important;
   border-top-color: #cccccc !important;
 }
+
+.lecture-render-root[data-lecture-theme="handout"] input.task-list-checkbox {
+  --cb-size: 1.32em;
+  --cb-radius: 0.24em;
+  --cb-border: #4b5563;
+  --cb-bg: #ffffff;
+  --cb-checked-bg: #2c4a70;
+  --cb-check-color: #ffffff;
+}
 "#;
 
 pub const THEME_DEFAULT_CSS: &str = r#"/* Theme: Modern (モダン・サンセリフ) */
@@ -502,6 +511,14 @@ pub const THEME_DEFAULT_CSS: &str = r#"/* Theme: Modern (モダン・サンセ�
 .lecture-render-root .mermaid-container { background-color: #ffffff !important; color: #0f172a !important; }
 .lecture-render-root .course-badge { background-color: #eff6ff !important; color: #1d4ed8 !important; border-color: #bfdbfe !important; }
 .lecture-render-root .lecture-doc-description { background-color: #f8fafc !important; border-left-color: #2563eb !important; color: #334155 !important; }
+.lecture-render-root input.task-list-checkbox {
+  --cb-size: 1.3em;
+  --cb-radius: 0.3em;
+  --cb-border: #94a3b8;
+  --cb-bg: #ffffff;
+  --cb-checked-bg: #2563eb;
+  --cb-check-color: #ffffff;
+}
 "#;
 
 pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグラフ) */
@@ -572,6 +589,14 @@ pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグ�
   background-color: #ffffff !important;
   color: #1c1917 !important;
 }
+.lecture-render-root input.task-list-checkbox {
+  --cb-size: 1.3em;
+  --cb-radius: 0.2em;
+  --cb-border: #8c8277;
+  --cb-bg: #fcfbf7;
+  --cb-checked-bg: #7c2d12;
+  --cb-check-color: #fcfbf7;
+}
 "#;
 
 pub const THEME_CHALKBOARD_CSS: &str = r#"/* Theme: Chalkboard (黒板・チョーク) */
@@ -639,6 +664,14 @@ pub const THEME_CHALKBOARD_CSS: &str = r#"/* Theme: Chalkboard (黒板・チョ�
 .lecture-render-root .description-text {
   color: #f3f6f4 !important;
 }
+.lecture-render-root input.task-list-checkbox {
+  --cb-size: 1.32em;
+  --cb-radius: 0.25em;
+  --cb-border: #fef08a;
+  --cb-bg: rgba(255, 255, 255, 0.08);
+  --cb-checked-bg: #fef08a;
+  --cb-check-color: #173528;
+}
 "#;
 
 pub const THEME_MIDNIGHT_CSS: &str = r#"/* Theme: Midnight (ダーク・プロジェクター) */
@@ -705,6 +738,14 @@ pub const THEME_MIDNIGHT_CSS: &str = r#"/* Theme: Midnight (ダーク・プロ�
   background-color: #f8fafc !important;
   color: #0f172a !important;
 }
+.lecture-render-root input.task-list-checkbox {
+  --cb-size: 1.3em;
+  --cb-radius: 0.28em;
+  --cb-border: #64748b;
+  --cb-bg: #1e293b;
+  --cb-checked-bg: #38bdf8;
+  --cb-check-color: #0f172a;
+}
 "#;
 
 pub const SAMPLE_CUSTOM_SUNSET_CSS: &str = r#"/* Custom Theme: sunset-warm (自由に編集可能なカスタムCSSテーマ例) */
@@ -748,6 +789,14 @@ pub const SAMPLE_CUSTOM_SUNSET_CSS: &str = r#"/* Custom Theme: sunset-warm (自�
 .lecture-render-root .mermaid-container {
   background-color: #ffffff !important;
   color: #1e293b !important;
+}
+.lecture-render-root input.task-list-checkbox {
+  --cb-size: 1.3em;
+  --cb-radius: 0.28em;
+  --cb-border: #fb923c;
+  --cb-bg: #fffaf5;
+  --cb-checked-bg: #ea580c;
+  --cb-check-color: #ffffff;
 }
 "#;
 
