@@ -120,6 +120,38 @@
 
         <!-- Center Pane: Markdown Editor -->
         <section id="pane-editor" class="editor-pane" aria-label="マークダウンエディタ">
+          <!-- Inline Find & Replace Bar (Cmd/Ctrl+F, Cmd/Ctrl+H) -->
+          <search id="find-replace-bar" class="find-replace-bar" aria-label="検索と置換" hidden>
+            <div class="find-row">
+              <label for="find-input" class="visually-hidden">検索文字列</label>
+              <input
+                type="search"
+                id="find-input"
+                class="find-input"
+                placeholder="検索 (Enter: 次へ / Shift+Enter: 前へ)"
+                autocomplete="off"
+              />
+              <span id="find-match-count" class="find-match-count">0 / 0</span>
+              <button type="button" id="btn-find-case" class="btn btn-icon btn-sm find-opt-btn" aria-pressed="false" title="大文字・小文字を区別">Aa</button>
+              <button type="button" id="btn-find-regex" class="btn btn-icon btn-sm find-opt-btn" aria-pressed="false" title="正規表現を使用">.*</button>
+              <button type="button" id="btn-find-prev" class="btn btn-icon btn-sm" aria-label="前の一致" title="前の一致 (Shift+Enter)">▲</button>
+              <button type="button" id="btn-find-next" class="btn btn-icon btn-sm" aria-label="次の一致" title="次の一致 (Enter)">▼</button>
+              <button type="button" id="btn-toggle-replace" class="btn btn-icon btn-sm" aria-expanded="false" aria-label="置換欄を表示" title="置換欄の表示/非表示">⇄</button>
+              <button type="button" id="btn-find-close" class="btn btn-icon btn-sm" aria-label="検索バーを閉じる" title="閉じる (Esc)">✕</button>
+            </div>
+            <div id="replace-row" class="find-row replace-row" hidden>
+              <label for="replace-input" class="visually-hidden">置換後の文字列</label>
+              <input
+                type="text"
+                id="replace-input"
+                class="find-input"
+                placeholder="置換後の文字列"
+                autocomplete="off"
+              />
+              <button type="button" id="btn-replace-one" class="btn btn-secondary btn-sm" title="現在の一致を置換">置換</button>
+              <button type="button" id="btn-replace-all" class="btn btn-secondary btn-sm" title="すべて置換 (Cmd+Zで元に戻せます)">すべて置換</button>
+            </div>
+          </search>
           <div class="editor-container">
             <div id="line-numbers" class="line-numbers" aria-hidden="true">1</div>
             <div class="editor-stage">
@@ -157,6 +189,7 @@
       <!-- Footer Status Bar (Essential Live Metrics Only) -->
       <footer class="statusbar">
         <div class="status-left">
+          <span id="editor-cursor-pos">行 1, 列 1</span>
           <span id="editor-stats">0 行 · 0 文字</span>
         </div>
         <div class="status-right">
@@ -301,6 +334,21 @@ $$</code></pre>
         <div class="dialog-actions">
           <button type="button" id="btn-clear-logs" class="btn btn-secondary">ログをクリア</button>
           <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Unsaved Changes Confirmation Dialog on Window Close -->
+    <dialog id="modal-unsaved-close" class="modal-dialog">
+      <form method="dialog" class="dialog-form">
+        <h2 class="dialog-title">⚠️ 未保存の変更があります</h2>
+        <p id="modal-unsaved-desc" class="dialog-desc">
+          編集中のファイルに未保存の変更があります。終了する前に保存しますか？
+        </p>
+        <div class="dialog-actions">
+          <button type="submit" value="cancel" class="btn btn-secondary">キャンセル</button>
+          <button type="submit" value="discard" class="btn btn-danger">保存せずに終了</button>
+          <button type="submit" value="save" class="btn btn-primary" autofocus>保存して終了</button>
         </div>
       </form>
     </dialog>

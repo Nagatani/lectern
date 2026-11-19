@@ -1,10 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
 import { highlightLectureMarkdown } from "./editor-highlight";
+import {
+  deleteSelectedLines,
+  duplicateSelectedLines,
+  type FindReplaceController,
+  getCursorLineCol,
+  handleSmartEnter,
+  indentOrOutdentSelection,
+  jumpToLine,
+  moveSelectedLines,
+  setupFindReplaceBar,
+  wrapSelectionWithPair,
+} from "./editor-features";
 
 // ============================================================================
 // Types matching Rust Backend structs
@@ -80,6 +93,7 @@ const state = {
 const elEditor = document.getElementById("markdown-editor") as HTMLTextAreaElement;
 const elEditorHighlight = document.getElementById("editor-highlight") as HTMLPreElement;
 const elLineNumbers = document.getElementById("line-numbers") as HTMLDivElement;
+const elEditorCursorPos = document.getElementById("editor-cursor-pos") as HTMLSpanElement;
 const elEditorStats = document.getElementById("editor-stats") as HTMLSpanElement;
 const elPreviewViewport = document.getElementById("preview-viewport") as HTMLDivElement;
 const elPreviewContent = document.getElementById("preview-content") as HTMLElement;
@@ -135,6 +149,10 @@ const modalHelp = document.getElementById("modal-help") as HTMLDialogElement;
 const modalLogs = document.getElementById("modal-logs") as HTMLDialogElement;
 const elActivityLogList = document.getElementById("activity-log-list") as HTMLDivElement;
 const btnClearLogs = document.getElementById("btn-clear-logs") as HTMLButtonElement;
+const modalUnsavedClose = document.getElementById("modal-unsaved-close") as HTMLDialogElement;
+const modalUnsavedDesc = document.getElementById("modal-unsaved-desc") as HTMLParagraphElement;
+
+let findReplaceController: FindReplaceController | null = null;
 
 // ============================================================================
 // Modern Web Guidance: <dialog closedby="any"> Fallback & Dark Mode Toggle
@@ -473,6 +491,11 @@ function escapeHtml(str: string): string {
 // Editor & Preview Sync
 // ============================================================================
 
+function updateCursorPosIndicator(): void {
+  const { line, col } = getCursorLineCol(elEditor);
+  elEditorCursorPos.textContent = `行 ${line}, 列 ${col}`;
+}
+
 function updateLineNumbersAndStats(): void {
   const text = elEditor.value;
   const lines = text.split("\n").length;
@@ -487,6 +510,8 @@ function updateLineNumbersAndStats(): void {
   elEditorHighlight.innerHTML = highlightLectureMarkdown(text);
   elEditorHighlight.scrollTop = elEditor.scrollTop;
   elEditorHighlight.scrollLeft = elEditor.scrollLeft;
+  updateCursorPosIndicator();
+  findReplaceController?.refreshMatches();
 }
 
 function markDirty(dirty: boolean): void {
@@ -1206,7 +1231,13 @@ const SNIPPETS: Record<string, string> = {
  * OS標準の Undo / Redo スタック（Cmd+Z / Cmd+Shift+Z 等）を維持したまま
  * エディタの指定範囲をテキストで置換・挿入する
  */
-function replaceEditorRangeWithUndo(text: string, start: number, end: number): void {
+function replaceEditorRangeWithUndo(
+  text: string,
+  start: number,
+  end: number,
+  nextSelStart?: number,
+  nextSelEnd?: number
+): void {
   elEditor.focus({ preventScroll: true });
   elEditor.setSelectionRange(start, end);
 
@@ -1221,9 +1252,29 @@ function replaceEditorRangeWithUndo(text: string, start: number, end: number): v
     elEditor.setRangeText(text, start, end, "end");
   }
 
+  if (nextSelStart !== undefined && nextSelEnd !== undefined) {
+    elEditor.setSelectionRange(nextSelStart, nextSelEnd);
+  }
+
   markDirty(true);
   updateLineNumbersAndStats();
   scheduleCompile();
+}
+
+async function gotoLineFlow(): Promise<void> {
+  const totalLines = elEditor.value.split("\n").length;
+  const { line } = getCursorLineCol(elEditor);
+  const input = await promptModal(
+    "指定行へ移動",
+    `移動先の行番号を入力してください (1 〜 ${totalLines}):`,
+    String(line)
+  );
+  if (!input) return;
+  const parsed = parseInt(input, 10);
+  if (!Number.isNaN(parsed) && parsed >= 1) {
+    jumpToLine(elEditor, parsed);
+    updateCursorPosIndicator();
+  }
 }
 
 function insertSnippetAtCursor(snippetKey: string): void {
@@ -1252,13 +1303,93 @@ function bindEvents(): void {
     elEditorHighlight.scrollLeft = elEditor.scrollLeft;
   });
 
+  elEditor.addEventListener("keyup", updateCursorPosIndicator);
+  elEditor.addEventListener("click", updateCursorPosIndicator);
+  elEditor.addEventListener("select", updateCursorPosIndicator);
+
   elEditor.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    const mod = e.metaKey || e.ctrlKey;
+
+    if (mod && !e.shiftKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === "s") {
+        e.preventDefault();
+        void saveCurrentFile();
+        return;
+      }
+      if (k === "f") {
+        e.preventDefault();
+        findReplaceController?.openFind(false);
+        return;
+      }
+      if (k === "h") {
+        e.preventDefault();
+        findReplaceController?.openFind(true);
+        return;
+      }
+      if (k === "g") {
+        e.preventDefault();
+        void gotoLineFlow();
+        return;
+      }
+    }
+
+    if (mod && e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
-      void saveCurrentFile();
-    } else if (e.key === "Tab") {
+      findReplaceController?.openFind(true);
+      return;
+    }
+
+    if (mod && e.shiftKey && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === "d") {
+        e.preventDefault();
+        duplicateSelectedLines(elEditor, replaceEditorRangeWithUndo);
+        return;
+      }
+      if (k === "k") {
+        e.preventDefault();
+        deleteSelectedLines(elEditor, replaceEditorRangeWithUndo);
+        return;
+      }
+    }
+
+    if (e.altKey && !mod && !e.shiftKey) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        moveSelectedLines(elEditor, -1, replaceEditorRangeWithUndo);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        moveSelectedLines(elEditor, 1, replaceEditorRangeWithUndo);
+        return;
+      }
+    }
+
+    // Tab / Shift+Tab: single-line & multi-line indent/outdent
+    if (e.key === "Tab" && !mod && !e.altKey) {
       e.preventDefault();
-      replaceEditorRangeWithUndo("  ", elEditor.selectionStart, elEditor.selectionEnd);
+      indentOrOutdentSelection(elEditor, e.shiftKey, replaceEditorRangeWithUndo);
+      return;
+    }
+
+    // Smart Enter (IME-safe: ignore when composing or Safari WebKit keyCode 229)
+    if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) {
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
+      if (handleSmartEnter(elEditor, replaceEditorRangeWithUndo)) {
+        e.preventDefault();
+      }
+      return;
+    }
+
+    // Wrap selected text with paired punctuation/brackets (`*`, `` ` ``, `(`, `[`, `「`, etc.)
+    if (!mod && !e.altKey && !e.isComposing && e.keyCode !== 229) {
+      if (wrapSelectionWithPair(elEditor, e.key, replaceEditorRangeWithUndo)) {
+        e.preventDefault();
+      }
     }
   });
 
@@ -1774,6 +1905,21 @@ async function setupNativeMenuListener(): Promise<void> {
         case "file:reveal-explorer":
           void revealInExplorer(state.currentFilePath || state.workspacePath);
           break;
+        case "edit:find":
+          findReplaceController?.openFind(false);
+          break;
+        case "edit:replace":
+          findReplaceController?.openFind(true);
+          break;
+        case "edit:goto-line":
+          void gotoLineFlow();
+          break;
+        case "edit:duplicate-line":
+          duplicateSelectedLines(elEditor, replaceEditorRangeWithUndo);
+          break;
+        case "edit:delete-line":
+          deleteSelectedLines(elEditor, replaceEditorRangeWithUndo);
+          break;
         case "edit:insert-image":
           void insertImageFlow();
           break;
@@ -1809,10 +1955,78 @@ async function setupNativeMenuListener(): Promise<void> {
   }
 }
 
+function confirmUnsavedBeforeClose(): Promise<"save" | "discard" | "cancel"> {
+  return new Promise((resolve) => {
+    const targetName = state.currentFileName || "無題のドキュメント";
+    modalUnsavedDesc.textContent = `「${targetName}」に未保存の変更があります。終了する前に保存しますか？`;
+    modalUnsavedClose.returnValue = "";
+
+    const onClose = () => {
+      modalUnsavedClose.removeEventListener("close", onClose);
+      const ret = modalUnsavedClose.returnValue;
+      modalUnsavedClose.returnValue = "";
+      if (ret === "save" || ret === "discard") {
+        resolve(ret);
+      } else {
+        resolve("cancel");
+      }
+    };
+
+    modalUnsavedClose.addEventListener("close", onClose);
+    modalUnsavedClose.showModal();
+  });
+}
+
+async function setupUnsavedCloseGuard(): Promise<void> {
+  // Browser fallback
+  window.addEventListener("beforeunload", (e) => {
+    if (state.isDirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  // Tauri native window close interception
+  try {
+    const appWindow = getCurrentWindow();
+    let handlingClose = false;
+    await appWindow.onCloseRequested(async (event) => {
+      if (!state.isDirty) {
+        return;
+      }
+      event.preventDefault();
+      if (handlingClose) return;
+      handlingClose = true;
+      try {
+        const choice = await confirmUnsavedBeforeClose();
+        if (choice === "save") {
+          await saveCurrentFile();
+          if (!state.isDirty) {
+            await appWindow.destroy();
+          }
+        } else if (choice === "discard") {
+          state.isDirty = false;
+          await appWindow.destroy();
+        }
+      } finally {
+        handlingClose = false;
+      }
+    });
+  } catch (_) {
+    // Ignore when running outside Tauri
+  }
+}
+
 async function initApp(): Promise<void> {
   bindEvents();
+  findReplaceController = setupFindReplaceBar(
+    elEditor,
+    replaceEditorRangeWithUndo,
+    setStatus
+  );
   setupPaneLayoutAndResizers();
   void setupNativeMenuListener();
+  void setupUnsavedCloseGuard();
   void setupNativeDragDrop();
   try {
     await syncRecentWorkspacesToNativeMenu();

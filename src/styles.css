@@ -202,6 +202,24 @@ body {
   border-color: transparent;
 }
 
+.btn-danger {
+  background-color: #dc2626;
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .btn-icon {
   padding: 5px 8px;
   font-size: 14px;
@@ -740,6 +758,66 @@ body.is-resizing * {
   flex-direction: column;
   background-color: var(--bg-surface);
   overflow: hidden;
+}
+
+/* Inline Find & Replace Bar */
+.find-replace-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background-color: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.find-replace-bar[hidden],
+.replace-row[hidden] {
+  display: none !important;
+}
+
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.find-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.find-input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.find-input.invalid {
+  border-color: #ef4444;
+  outline-color: #ef4444;
+}
+
+.find-match-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 44px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.find-opt-btn[aria-pressed="true"] {
+  background-color: var(--brand);
+  color: var(--brand-text);
+  border-color: transparent;
 }
 
 .editor-container {

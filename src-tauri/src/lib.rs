@@ -509,7 +509,22 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     }
     let file_submenu = file_sub.build()?;
 
-    // 3. 編集 メニュー（OS標準の Undo/Redo/Cut/Copy/Paste/SelectAll + 画像挿入）
+    // 3. 編集 メニュー（OS標準の Undo/Redo/Cut/Copy/Paste/SelectAll + 検索置換・行操作・画像挿入）
+    let find_item = MenuItemBuilder::with_id("edit:find", "検索...")
+        .accelerator("CmdOrCtrl+F")
+        .build(app)?;
+    let replace_item = MenuItemBuilder::with_id("edit:replace", "置換...")
+        .accelerator("CmdOrCtrl+H")
+        .build(app)?;
+    let goto_line = MenuItemBuilder::with_id("edit:goto-line", "指定行へ移動...")
+        .accelerator("CmdOrCtrl+G")
+        .build(app)?;
+    let dup_line = MenuItemBuilder::with_id("edit:duplicate-line", "行を複製")
+        .accelerator("CmdOrCtrl+Shift+D")
+        .build(app)?;
+    let del_line = MenuItemBuilder::with_id("edit:delete-line", "行を削除")
+        .accelerator("CmdOrCtrl+Shift+K")
+        .build(app)?;
     let insert_image = MenuItemBuilder::with_id("edit:insert-image", "画像を挿入...")
         .accelerator("CmdOrCtrl+Shift+I")
         .build(app)?;
@@ -521,6 +536,13 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .copy()
         .paste()
         .select_all()
+        .separator()
+        .item(&find_item)
+        .item(&replace_item)
+        .item(&goto_line)
+        .separator()
+        .item(&dup_line)
+        .item(&del_line)
         .separator()
         .item(&insert_image)
         .build()?;
