@@ -792,51 +792,57 @@ pub fn builtin_themes() -> Vec<ThemeInfo> {
 }
 
 /// ワークスペースの `themes/` フォルダ内の `.css` ファイルを含めた全利用可能テーマ一覧を返す
+///
+/// 内蔵テーマ (`handout` 等) は常にアプリの最新定義をそのまま使用し、
+/// フォルダを開くだけで勝手に `themes/` や `handout.css` を自動生成・上書きしない。
 pub fn list_available_themes(workspace_path: Option<&Path>) -> Vec<ThemeInfo> {
     let mut themes = builtin_themes();
 
     if let Some(ws) = workspace_path {
         let themes_dir = ws.join("themes");
-        if !themes_dir.exists() {
-            if fs::create_dir_all(&themes_dir).is_ok() {
-                let _ = fs::write(themes_dir.join("handout.css"), THEME_HANDOUT_CSS);
-                let _ = fs::write(themes_dir.join("sunset-warm.css"), SAMPLE_CUSTOM_SUNSET_CSS);
-            }
-        }
-
-        if let Ok(entries) = fs::read_dir(&themes_dir) {
-            let mut custom_files = Vec::new();
-            for item in entries.flatten() {
-                let path = item.path();
-                if path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.eq_ignore_ascii_case("css"))
-                    .unwrap_or(false)
-                {
-                    custom_files.push(path);
+        if themes_dir.exists() && themes_dir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&themes_dir) {
+                let mut custom_files = Vec::new();
+                for item in entries.flatten() {
+                    let path = item.path();
+                    if path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("css"))
+                        .unwrap_or(false)
+                    {
+                        custom_files.push(path);
+                    }
                 }
-            }
-            custom_files.sort();
+                custom_files.sort();
 
-            for css_path in custom_files {
-                let stem = css_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("custom")
-                    .to_string();
-                if let Ok(css_content) = fs::read_to_string(&css_path) {
-                    if let Some(existing) = themes.iter_mut().find(|t| t.id == stem) {
-                        existing.css = css_content;
-                        existing.file_path = Some(css_path.to_string_lossy().to_string());
-                    } else {
-                        themes.push(ThemeInfo {
-                            id: stem.clone(),
-                            name: format!("Custom: {}.css", stem),
-                            css: css_content,
-                            is_builtin: false,
-                            file_path: Some(css_path.to_string_lossy().to_string()),
-                        });
+                for css_path in custom_files {
+                    let stem = css_path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("custom")
+                        .to_string();
+                    if let Ok(css_content) = fs::read_to_string(&css_path) {
+                        let collides_with_builtin =
+                            themes.iter().any(|t| t.is_builtin && t.id.eq_ignore_ascii_case(&stem));
+                        if collides_with_builtin {
+                            // 内蔵テーマを上書きせず、別エントリとして選択可能にする
+                            themes.push(ThemeInfo {
+                                id: format!("local-{}", stem),
+                                name: format!("Local: {}.css", stem),
+                                css: css_content,
+                                is_builtin: false,
+                                file_path: Some(css_path.to_string_lossy().to_string()),
+                            });
+                        } else {
+                            themes.push(ThemeInfo {
+                                id: stem.clone(),
+                                name: format!("Custom: {}.css", stem),
+                                css: css_content,
+                                is_builtin: false,
+                                file_path: Some(css_path.to_string_lossy().to_string()),
+                            });
+                        }
                     }
                 }
             }
@@ -926,4 +932,45 @@ pub fn resolve_theme_css(
     }
 
     (resolved_id, resolved_css)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_handout_is_not_shadowed_by_workspace_file_and_no_auto_create() {
+        let tmp = std::env::temp_dir().join(format!(
+            "lectern_themes_test_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // themes/ が無いワークスペースを開いても自動生成しない
+        let themes = list_available_themes(Some(&tmp));
+        assert!(!tmp.join("themes").exists());
+        assert!(themes.iter().any(|t| t.id == "handout" && t.is_builtin));
+
+        // 古い themes/handout.css が存在しても内蔵 handout は上書きされない
+        fs::create_dir_all(tmp.join("themes")).unwrap();
+        fs::write(tmp.join("themes/handout.css"), "/* stale css */").unwrap();
+
+        let themes_with_stale = list_available_themes(Some(&tmp));
+        let builtin = themes_with_stale
+            .iter()
+            .find(|t| t.id == "handout")
+            .unwrap();
+        assert!(builtin.is_builtin);
+        assert_eq!(builtin.css, THEME_HANDOUT_CSS);
+
+        let local_copy = themes_with_stale
+            .iter()
+            .find(|t| t.id == "local-handout")
+            .unwrap();
+        assert!(!local_copy.is_builtin);
+        assert_eq!(local_copy.css, "/* stale css */");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
