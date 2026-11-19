@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
+import { highlightLectureMarkdown } from "./editor-highlight";
 
 // ============================================================================
 // Types matching Rust Backend structs
@@ -77,6 +78,7 @@ const state = {
 // ============================================================================
 
 const elEditor = document.getElementById("markdown-editor") as HTMLTextAreaElement;
+const elEditorHighlight = document.getElementById("editor-highlight") as HTMLPreElement;
 const elLineNumbers = document.getElementById("line-numbers") as HTMLDivElement;
 const elEditorStats = document.getElementById("editor-stats") as HTMLSpanElement;
 const elPreviewViewport = document.getElementById("preview-viewport") as HTMLDivElement;
@@ -482,6 +484,9 @@ function updateLineNumbersAndStats(): void {
   }
   elLineNumbers.textContent = nums.join("\n");
   elEditorStats.textContent = `${lines} 行 · ${chars} 文字`;
+  elEditorHighlight.innerHTML = highlightLectureMarkdown(text);
+  elEditorHighlight.scrollTop = elEditor.scrollTop;
+  elEditorHighlight.scrollLeft = elEditor.scrollLeft;
 }
 
 function markDirty(dirty: boolean): void {
@@ -1243,6 +1248,8 @@ function bindEvents(): void {
 
   elEditor.addEventListener("scroll", () => {
     elLineNumbers.scrollTop = elEditor.scrollTop;
+    elEditorHighlight.scrollTop = elEditor.scrollTop;
+    elEditorHighlight.scrollLeft = elEditor.scrollLeft;
   });
 
   elEditor.addEventListener("keydown", (e) => {

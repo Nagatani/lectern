@@ -122,13 +122,16 @@
         <section id="pane-editor" class="editor-pane" aria-label="マークダウンエディタ">
           <div class="editor-container">
             <div id="line-numbers" class="line-numbers" aria-hidden="true">1</div>
-            <textarea
-              id="markdown-editor"
-              class="markdown-editor"
-              spellcheck="false"
-              placeholder="ここに講義資料のMarkdownを入力してください..."
-              aria-label="Markdownソースコード"
-            ></textarea>
+            <div class="editor-stage">
+              <pre id="editor-highlight" class="editor-highlight-layer" aria-hidden="true"></pre>
+              <textarea
+                id="markdown-editor"
+                class="markdown-editor"
+                spellcheck="false"
+                placeholder="ここに講義資料のMarkdownを入力してください..."
+                aria-label="Markdownソースコード"
+              ></textarea>
+            </div>
           </div>
         </section>
 
