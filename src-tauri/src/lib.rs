@@ -287,10 +287,9 @@ fn save_custom_theme(
 fn default_export_dir_and_filename(
     source_path: Option<&str>,
     workspace_path: &str,
-    mode: &str,
+    _mode: &str,
     extension: &str,
 ) -> (PathBuf, String) {
-    let suffix = if mode == "slide" { "_slide" } else { "_doc" };
     if let Some(src) = source_path.filter(|s| !s.trim().is_empty()) {
         let p = Path::new(src);
         let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("lecture");
@@ -298,11 +297,11 @@ fn default_export_dir_and_filename(
             .parent()
             .unwrap_or_else(|| Path::new(workspace_path))
             .to_path_buf();
-        (dir, format!("{}{}.{}", stem, suffix, extension))
+        (dir, format!("{}.{}", stem, extension))
     } else {
         (
             PathBuf::from(workspace_path),
-            format!("lecture{}.{}", suffix, extension),
+            format!("lecture.{}", extension),
         )
     }
 }
