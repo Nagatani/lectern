@@ -4,8 +4,8 @@ pub mod pdf;
 pub mod themes;
 
 use converter::{
-    build_standalone_html_with_base_dir, compile_lecture_markdown,
-    compile_lecture_markdown_with_options, CompileResult,
+    build_slideshow_html_with_base_dir, build_standalone_html_with_base_dir,
+    compile_lecture_markdown, compile_lecture_markdown_with_options, CompileResult,
 };
 use fs_ops::{
     create_new_markdown, list_markdown_workspace, read_file_utf8, remove_markdown_file,
@@ -365,6 +365,62 @@ async fn export_lecture_html(
 }
 
 #[tauri::command]
+async fn export_lecture_slideshow_html(
+    source_path: Option<String>,
+    workspace_path: String,
+    markdown: String,
+    rendered_body_html: Option<String>,
+    theme_id: Option<String>,
+    custom_css: Option<String>,
+) -> Result<Option<ExportResult>, String> {
+    let (default_dir, default_filename) =
+        default_export_dir_and_filename(source_path.as_deref(), &workspace_path, "slide", "html");
+
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title("スライドショー HTML ファイルの保存先を選択")
+        .add_filter("HTML Slideshow", &["html", "htm"])
+        .set_file_name(&default_filename);
+
+    if default_dir.exists() && default_dir.is_dir() {
+        dialog = dialog.set_directory(&default_dir);
+    }
+
+    let Some(handle) = dialog.save_file().await else {
+        return Ok(None);
+    };
+    let out_path = handle.path().to_path_buf();
+
+    let compiled = compile_lecture_markdown(&markdown, "slide");
+    let requested_theme = theme_id.as_deref().or(compiled.theme.as_deref());
+    let (resolved_id, resolved_css) = resolve_theme_css(
+        Some(Path::new(&workspace_path)),
+        requested_theme,
+        custom_css.as_deref(),
+    );
+
+    let full_html = build_slideshow_html_with_base_dir(
+        &markdown,
+        rendered_body_html.as_deref(),
+        Some(&resolved_id),
+        Some(&resolved_css),
+        Some(&default_dir),
+    );
+    write_file_utf8(&out_path, &full_html)?;
+    let bytes = full_html.len() as u64;
+
+    Ok(Some(ExportResult {
+        output_path: out_path.to_string_lossy().to_string(),
+        bytes_written: bytes,
+        message: format!(
+            "スライドショー HTML を出力しました (全 {} 枚 / Theme: {}, {:.1} KB)",
+            compiled.slide_count,
+            resolved_id,
+            bytes as f64 / 1024.0
+        ),
+    }))
+}
+
+#[tauri::command]
 async fn export_lecture_pdf(
     source_path: Option<String>,
     workspace_path: String,
@@ -479,6 +535,10 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     let export_html = MenuItemBuilder::with_id("file:export-html", "HTML として出力...")
         .accelerator("CmdOrCtrl+Shift+E")
         .build(app)?;
+    let export_slideshow =
+        MenuItemBuilder::with_id("file:export-slideshow", "スライドショー HTML として出力...")
+            .accelerator("CmdOrCtrl+Shift+S")
+            .build(app)?;
     let export_pdf = MenuItemBuilder::with_id("file:export-pdf", "PDF として出力...")
         .accelerator("CmdOrCtrl+Shift+P")
         .build(app)?;
@@ -496,6 +556,7 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .item(&save_file)
         .separator()
         .item(&export_html)
+        .item(&export_slideshow)
         .item(&export_pdf)
         .separator()
         .item(&reveal_explorer);
@@ -691,6 +752,7 @@ pub fn run() {
             list_themes,
             save_custom_theme,
             export_lecture_html,
+            export_lecture_slideshow_html,
             export_lecture_pdf,
             update_recent_workspaces_menu,
         ])
@@ -846,5 +908,19 @@ let ptr = **x;
         assert!(res_esc.html.contains("python"), "html={}", res_esc.html);
         assert!(!res_esc.html.contains(r"\`\`\`"), "エスケープ記号が残ってはならない: {}", res_esc.html);
         assert!(!res_esc.html.contains(r"\```"), "エスケープ記号が残ってはならない: {}", res_esc.html);
+    }
+
+    #[test]
+    fn test_slideshow_standalone_html_generation() {
+        let md = "# スライド1\n\n内容A\n\n---\n\n# スライド2\n\n数式 $E=mc^2$\n";
+        let (id, css) = resolve_theme_css(None, Some("midnight"), None);
+        let html = build_slideshow_html_with_base_dir(md, None, Some(&id), Some(&css), None);
+        assert!(html.contains("mode-slideshow"));
+        assert!(html.contains("lectern-slideshow-css"));
+        assert!(html.contains("slideshow-hud"));
+        assert!(html.contains("ss-overview"));
+        assert!(html.contains("ss-fullscreen"));
+        assert!(html.contains("data:font/woff2;base64,"));
+        assert!(!html.contains("https://cdn.jsdelivr.net"));
     }
 }

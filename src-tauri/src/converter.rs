@@ -1318,3 +1318,418 @@ pub fn build_standalone_html_with_base_dir(
         body_content = body_content
     )
 }
+
+/// Web ブラウザ上で全画面・16:9 スケール対応のスライドショーとしてプレゼン再生できる
+/// 100% 自己完結型スタンドアロン HTML を生成する
+pub fn build_slideshow_html_with_base_dir(
+    markdown: &str,
+    rendered_body_html: Option<&str>,
+    theme_id: Option<&str>,
+    theme_css: Option<&str>,
+    base_dir: Option<&Path>,
+) -> String {
+    let base_html = build_standalone_html_with_base_dir(
+        markdown,
+        rendered_body_html,
+        "slide",
+        theme_id,
+        theme_css,
+        base_dir,
+    );
+
+    let slideshow_css = r#"
+  <style id="lectern-slideshow-css">
+    html, body.mode-slideshow {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #0b0f19 !important;
+    }
+    body.mode-slideshow .lecture-render-root {
+      position: fixed;
+      inset: 0;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      gap: 0 !important;
+      background: transparent !important;
+      max-width: none !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
+    body.mode-slideshow .lecture-slide {
+      display: none !important;
+      width: 1120px !important;
+      height: 630px !important;
+      margin: 0 !important;
+      flex-shrink: 0;
+      overflow-y: auto;
+      transform-origin: center center;
+      transform: scale(var(--slide-scale, 1));
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55) !important;
+      border-radius: 10px !important;
+    }
+    body.mode-slideshow .lecture-slide.is-active {
+      display: flex !important;
+    }
+
+    /* Overview Grid Mode (O / G key) */
+    body.mode-slideshow.is-overview {
+      overflow-y: auto;
+    }
+    body.mode-slideshow.is-overview .lecture-render-root {
+      position: static;
+      display: grid !important;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 24px;
+      padding: 32px 32px 96px !important;
+      align-items: start !important;
+      justify-items: center !important;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-wrap {
+      position: relative;
+      width: 336px;
+      height: 189px;
+      border-radius: 8px;
+      overflow: hidden;
+      cursor: pointer;
+      outline: 2px solid rgba(255, 255, 255, 0.16);
+      outline-offset: 2px;
+      transition: outline-color 0.15s ease, transform 0.15s ease;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-wrap:hover {
+      outline-color: #60a5fa;
+      transform: translateY(-2px);
+    }
+    body.mode-slideshow.is-overview .slide-thumb-wrap.is-current {
+      outline: 3px solid #38bdf8;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-wrap .lecture-slide {
+      display: flex !important;
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: top left;
+      transform: scale(0.3) !important;
+      pointer-events: none;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-badge {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 3;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      background: rgba(15, 23, 42, 0.82);
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    /* Presenter Floating HUD */
+    .slideshow-hud {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      z-index: 9999;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      font-size: 12.5px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+      transition: opacity 0.25s ease;
+    }
+    body.mode-slideshow.hud-hidden .slideshow-hud {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .slideshow-hud:hover {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+    }
+    .slideshow-hud button {
+      border: none;
+      background: transparent;
+      color: #f8fafc;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+    }
+    .slideshow-hud button:hover {
+      background: rgba(255, 255, 255, 0.16);
+    }
+    .slideshow-hud button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+    .slideshow-hud .hud-counter {
+      min-width: 58px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .slideshow-hud .hud-sep {
+      width: 1px;
+      height: 16px;
+      background: rgba(255, 255, 255, 0.2);
+      margin: 0 2px;
+    }
+
+    /* Bottom Progress Bar */
+    .slideshow-progress {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.1);
+      z-index: 9998;
+    }
+    .slideshow-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: #38bdf8;
+      transition: width 0.2s ease;
+    }
+
+    @media print {
+      html, body.mode-slideshow {
+        width: auto;
+        height: auto;
+        overflow: visible !important;
+        background: #ffffff !important;
+      }
+      body.mode-slideshow .lecture-render-root {
+        position: static !important;
+        display: block !important;
+      }
+      body.mode-slideshow .lecture-slide {
+        display: flex !important;
+        transform: none !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        box-shadow: none !important;
+        border: none !important;
+        border-radius: 0 !important;
+        page-break-after: always;
+        break-after: page;
+      }
+      .slideshow-hud,
+      .slideshow-progress {
+        display: none !important;
+      }
+    }
+  </style>
+</head>"#;
+
+    let slideshow_hud_and_script = r##"
+  <div class="slideshow-hud" role="toolbar" aria-label="スライドショー操作">
+    <button type="button" id="ss-prev" title="前のスライド (← / PageUp)">◀</button>
+    <span id="ss-counter" class="hud-counter">1 / 1</span>
+    <button type="button" id="ss-next" title="次のスライド (→ / Space / PageDown)">▶</button>
+    <span class="hud-sep" aria-hidden="true"></span>
+    <button type="button" id="ss-overview" title="スライド一覧グリッド (O / G)">⊞ 一覧</button>
+    <button type="button" id="ss-fullscreen" title="全画面表示切替 (F)">⛶ 全画面</button>
+  </div>
+  <div class="slideshow-progress" aria-hidden="true">
+    <div id="ss-progress-fill" class="slideshow-progress-fill"></div>
+  </div>
+  <script>
+    (function () {
+      const root = document.querySelector(".lecture-render-root");
+      const slides = Array.from(document.querySelectorAll(".lecture-slide"));
+      if (!root || slides.length === 0) return;
+
+      const btnPrev = document.getElementById("ss-prev");
+      const btnNext = document.getElementById("ss-next");
+      const btnOverview = document.getElementById("ss-overview");
+      const btnFullscreen = document.getElementById("ss-fullscreen");
+      const elCounter = document.getElementById("ss-counter");
+      const elProgress = document.getElementById("ss-progress-fill");
+
+      let current = 0;
+      let inOverview = false;
+      let hudTimer = null;
+
+      function parseHashIndex() {
+        const m = /^#(\d+)$/.exec(window.location.hash);
+        if (!m) return 0;
+        const n = parseInt(m[1], 10) - 1;
+        return Math.max(0, Math.min(slides.length - 1, n));
+      }
+
+      function updateScale() {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const scale = Math.min((vw - 24) / 1120, (vh - 24) / 630);
+        document.documentElement.style.setProperty("--slide-scale", String(Math.max(0.2, scale)));
+      }
+
+      function renderCurrent() {
+        slides.forEach((s, idx) => {
+          s.classList.toggle("is-active", idx === current);
+        });
+        if (elCounter) elCounter.textContent = (current + 1) + " / " + slides.length;
+        if (btnPrev) btnPrev.disabled = current <= 0;
+        if (btnNext) btnNext.disabled = current >= slides.length - 1;
+        if (elProgress) {
+          const pct = slides.length <= 1 ? 100 : ((current + 1) / slides.length) * 100;
+          elProgress.style.width = pct.toFixed(1) + "%";
+        }
+        const targetHash = "#" + (current + 1);
+        if (window.location.hash !== targetHash) {
+          try { history.replaceState(null, "", targetHash); } catch (_) {}
+        }
+      }
+
+      function goTo(index) {
+        current = Math.max(0, Math.min(slides.length - 1, index));
+        if (inOverview) setOverview(false);
+        renderCurrent();
+      }
+
+      function setOverview(enable) {
+        if (inOverview === enable) return;
+        inOverview = enable;
+        document.body.classList.toggle("is-overview", enable);
+        if (btnOverview) btnOverview.textContent = enable ? "✕ 戻る" : "⊞ 一覧";
+
+        if (enable) {
+          document.body.classList.remove("hud-hidden");
+          root.innerHTML = "";
+          slides.forEach((slideEl, idx) => {
+            const wrap = document.createElement("div");
+            wrap.className = "slide-thumb-wrap" + (idx === current ? " is-current" : "");
+            wrap.title = "スライド " + (idx + 1) + " へ移動";
+            const badge = document.createElement("span");
+            badge.className = "slide-thumb-badge";
+            badge.textContent = String(idx + 1);
+            wrap.appendChild(slideEl);
+            wrap.appendChild(badge);
+            wrap.addEventListener("click", () => goTo(idx));
+            root.appendChild(wrap);
+          });
+        } else {
+          root.innerHTML = "";
+          slides.forEach((slideEl) => root.appendChild(slideEl));
+          updateScale();
+          renderCurrent();
+        }
+      }
+
+      function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen?.().catch(() => {});
+        } else {
+          document.exitFullscreen?.().catch(() => {});
+        }
+      }
+
+      function wakeHud() {
+        document.body.classList.remove("hud-hidden");
+        if (hudTimer) clearTimeout(hudTimer);
+        if (!inOverview) {
+          hudTimer = setTimeout(() => {
+            document.body.classList.add("hud-hidden");
+          }, 2600);
+        }
+      }
+
+      btnPrev?.addEventListener("click", () => goTo(current - 1));
+      btnNext?.addEventListener("click", () => goTo(current + 1));
+      btnOverview?.addEventListener("click", () => setOverview(!inOverview));
+      btnFullscreen?.addEventListener("click", toggleFullscreen);
+
+      window.addEventListener("keydown", (e) => {
+        if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+        wakeHud();
+        if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown" || e.key === " " || e.key === "Enter") {
+          if (inOverview) return;
+          e.preventDefault();
+          goTo(current + 1);
+        } else if (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Backspace") {
+          if (inOverview) return;
+          e.preventDefault();
+          goTo(current - 1);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          goTo(0);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          goTo(slides.length - 1);
+        } else if (e.key.toLowerCase() === "o" || e.key.toLowerCase() === "g") {
+          e.preventDefault();
+          setOverview(!inOverview);
+        } else if (e.key.toLowerCase() === "f") {
+          e.preventDefault();
+          toggleFullscreen();
+        } else if (e.key === "Escape" && inOverview) {
+          e.preventDefault();
+          setOverview(false);
+        }
+      });
+
+      // Touch swipe navigation
+      let touchStartX = null;
+      window.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
+      }, { passive: true });
+      window.addEventListener("touchend", (e) => {
+        if (touchStartX === null || inOverview) return;
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        touchStartX = null;
+        if (Math.abs(dx) > 48) {
+          goTo(dx < 0 ? current + 1 : current - 1);
+        }
+      }, { passive: true });
+
+      window.addEventListener("mousemove", wakeHud, { passive: true });
+      window.addEventListener("resize", updateScale);
+      document.addEventListener("fullscreenchange", updateScale);
+      window.addEventListener("hashchange", () => {
+        current = parseHashIndex();
+        if (!inOverview) renderCurrent();
+      });
+
+      current = parseHashIndex();
+      updateScale();
+      renderCurrent();
+      wakeHud();
+    })();
+  </script>
+</body>"##;
+
+    let with_body_cls = base_html.replacen(
+        "<body class=\"mode-slide ",
+        "<body class=\"mode-slide mode-slideshow ",
+        1,
+    );
+    let with_css = with_body_cls.replacen("</head>", slideshow_css, 1);
+
+    if let Some(script_idx) = with_css.rfind("  <script>") {
+        format!("{}{}\n</html>", &with_css[..script_idx], slideshow_hud_and_script)
+    } else {
+        with_css.replacen("</body>", slideshow_hud_and_script, 1)
+    }
+}

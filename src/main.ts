@@ -1180,6 +1180,49 @@ async function exportHtmlFlow(): Promise<void> {
   }
 }
 
+async function getRenderedSlideBodyHtml(): Promise<string> {
+  if (state.mode === "slide") {
+    return getFullyRenderedPreviewHtml();
+  }
+  // ドキュメント表示中からスライドショー出力した場合も、スライド形式で KaTeX / Mermaid をレンダリングする
+  const res = await invoke<CompileResult>("compile_markdown", {
+    markdown: elEditor.value,
+    mode: "slide",
+    themeId: state.currentThemeId,
+    baseDir: getCurrentBaseDir(),
+  });
+  const offscreen = document.createElement("div");
+  offscreen.innerHTML = res.html;
+  await renderMathAndDiagrams(offscreen);
+  return offscreen.innerHTML;
+}
+
+async function exportSlideshowHtmlFlow(): Promise<void> {
+  if (state.isDirty && state.currentFilePath) {
+    await saveCurrentFile();
+  }
+  setStatus(`スライドショーHTMLの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
+  try {
+    const renderedBodyHtml = await getRenderedSlideBodyHtml();
+    const res = await invoke<ExportResult | null>("export_lecture_slideshow_html", {
+      sourcePath: state.currentFilePath || null,
+      workspacePath: state.workspacePath,
+      markdown: elEditor.value,
+      renderedBodyHtml,
+      themeId: state.currentThemeId,
+      customCss: state.inlineCustomCss || null,
+    });
+    if (!res) {
+      setStatus("スライドショーHTML出力をキャンセルしました");
+      return;
+    }
+    setStatus(res.message);
+    showExportModal("📽️ スライドショーHTML出力完了", res.message, res.output_path);
+  } catch (err) {
+    setStatus(`スライドショーHTML出力エラー: ${String(err)}`);
+  }
+}
+
 async function exportPdfFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
@@ -1898,6 +1941,9 @@ async function setupNativeMenuListener(): Promise<void> {
           break;
         case "file:export-html":
           void exportHtmlFlow();
+          break;
+        case "file:export-slideshow":
+          void exportSlideshowHtmlFlow();
           break;
         case "file:export-pdf":
           void exportPdfFlow();
