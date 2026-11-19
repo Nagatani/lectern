@@ -800,4 +800,30 @@ let ptr = **x;
         assert!(task_res.html.contains(r#"<input type="checkbox" class="task-list-checkbox" checked />"#));
         assert!(!task_res.html.contains("disabled"));
     }
+
+    #[test]
+    fn test_nested_markdown_code_blocks_and_escaped_fences() {
+        // 1. 4連バッククォートでネストされた Markdown コードブロック（内部に ``` / > [!NOTE] / --- を含む）
+        let nested_4 = "````markdown\n# 例\n\n> [!NOTE]\n> サンプル\n\n---\n\n```rust\nfn main() {}\n```\n````\n";
+        let res_slide = compile_lecture_markdown(nested_4, "slide");
+        assert_eq!(res_slide.slide_count, 1, "コードブロック内の --- でスライド分割されてはならない");
+        assert!(
+            !res_slide.html.contains(r#"class="callout callout-note""#),
+            "コードブロック内の > [!NOTE] がコールアウトHTMLに変換されてはならない: {}",
+            res_slide.html
+        );
+        assert!(
+            res_slide.html.contains("```</span>") && res_slide.html.contains("rust"),
+            "ネストされた ```rust がそのまま出力されること: {}",
+            res_slide.html
+        );
+
+        // 2. ```markdown 内でバックスラッシュエスケープされた \`\`\` / \``` が復元されて出力されること
+        let escaped_md = "```markdown\n\\`\\`\\`rust\nfn hi() {}\n\\`\\`\\`\n\\```python\nprint(1)\n\\```\n```\n";
+        let res_esc = compile_lecture_markdown(escaped_md, "document");
+        assert!(res_esc.html.contains("```</span>") && res_esc.html.contains("rust"), "html={}", res_esc.html);
+        assert!(res_esc.html.contains("python"), "html={}", res_esc.html);
+        assert!(!res_esc.html.contains(r"\`\`\`"), "エスケープ記号が残ってはならない: {}", res_esc.html);
+        assert!(!res_esc.html.contains(r"\```"), "エスケープ記号が残ってはならない: {}", res_esc.html);
+    }
 }

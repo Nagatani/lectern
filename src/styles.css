@@ -1186,6 +1186,19 @@ body.is-resizing * {
   border-left-color: #f59e0b;
 }
 
+/* Embedded Images (Never overflow content width) */
+.lecture-render-root img {
+  max-width: 100% !important;
+  height: auto !important;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.lecture-render-root figure {
+  max-width: 100%;
+  margin: 1.2rem 0;
+}
+
 /* Two-Column Layout Helper for Slides/Docs */
 .lecture-columns {
   display: grid;
@@ -1193,6 +1206,10 @@ body.is-resizing * {
   gap: 20px;
   align-items: start;
   margin: 14px 0;
+}
+
+.lecture-columns > * {
+  min-width: 0;
 }
 
 /* Tables */

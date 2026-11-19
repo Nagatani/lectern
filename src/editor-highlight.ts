@@ -346,6 +346,7 @@ export function highlightLectureMarkdown(source: string): string {
   let inCodeFence = false;
   let codeFenceLang = "";
   let codeFenceMarker = "";
+  let codeFenceLen = 0;
   let inMathBlock = false;
 
   // Detect YAML frontmatter starting on line 0
@@ -386,19 +387,26 @@ export function highlightLectureMarkdown(source: string): string {
       const fenceMatch = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(line);
       if (fenceMatch) {
         const [, indent, marker, info] = fenceMatch;
-        if (!inCodeFence) {
+        if (!inCodeFence && (marker[0] === "~" || !info.includes("`"))) {
           inCodeFence = true;
           codeFenceMarker = marker[0];
+          codeFenceLen = marker.length;
           codeFenceLang = info.trim().split(/\s+/)[0].toLowerCase();
           rendered[i] =
             escapeHtml(indent) +
             wrap("hl-code-fence", marker) +
             (info ? wrap("hl-code-lang", info) : "");
           continue;
-        } else if (marker[0] === codeFenceMarker && info.trim() === "") {
+        } else if (
+          inCodeFence &&
+          marker[0] === codeFenceMarker &&
+          marker.length >= codeFenceLen &&
+          info.trim() === ""
+        ) {
           inCodeFence = false;
           codeFenceLang = "";
           codeFenceMarker = "";
+          codeFenceLen = 0;
           rendered[i] = escapeHtml(indent) + wrap("hl-code-fence", marker);
           continue;
         }

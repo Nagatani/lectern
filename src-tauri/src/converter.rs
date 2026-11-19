@@ -239,19 +239,55 @@ fn parse_frontmatter(input: &str) -> (FrontMatter, String) {
     (meta, normalized)
 }
 
+/// CommonMark 準拠のコードフェンス追跡ヘルパー（4連バッククォートやチルダによるネストに対応）
+#[derive(Default)]
+struct FenceTracker {
+    active: Option<(char, usize)>,
+}
+
+impl FenceTracker {
+    fn is_in_fence(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// 1行を処理し、その行がコードフェンスの内側（開始・終了行を含む）であれば true を返す
+    fn process_line(&mut self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+        if let Some((f_char, f_len)) = self.active {
+            let count = trimmed.chars().take_while(|&c| c == f_char).count();
+            if count >= f_len && trimmed[count..].trim().is_empty() {
+                self.active = None;
+            }
+            return true;
+        }
+
+        if let Some(first) = trimmed.chars().next() {
+            if first == '`' || first == '~' {
+                let count = trimmed.chars().take_while(|&c| c == first).count();
+                let info = &trimmed[count..];
+                // CommonMark: バッククォートフェンスの info 文字列にはバッククォートを含められない
+                if count >= 3 && (first == '~' || !info.contains('`')) {
+                    self.active = Some((first, count));
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
 /// コードフェンス外の独立した `---` 行でスライドを分割する
 fn split_slides(markdown: &str) -> Vec<String> {
     let mut slides = Vec::new();
     let mut current = String::new();
-    let mut in_code_fence = false;
+    let mut fence = FenceTracker::default();
 
     for line in markdown.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code_fence = !in_code_fence;
-        }
+        let was_in_fence = fence.is_in_fence();
+        let is_fence_line = fence.process_line(line);
 
-        if !in_code_fence && trimmed == "---" {
+        if !was_in_fence && !is_fence_line && line.trim() == "---" {
             if !current.trim().is_empty() {
                 slides.push(current.clone());
                 current.clear();
@@ -271,11 +307,19 @@ fn split_slides(markdown: &str) -> Vec<String> {
 }
 
 /// GitHub スタイルのコールアウト (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`) を HTML ブロックに変換する
+/// コードフェンス内の `> [!NOTE]` は変換せずそのまま保持する
 fn preprocess_callouts(markdown: &str) -> String {
     let mut out = String::new();
     let mut lines = markdown.lines().peekable();
+    let mut fence = FenceTracker::default();
 
     while let Some(line) = lines.next() {
+        if fence.process_line(line) {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
         let trimmed = line.trim_start();
         if let Some(after_gt) = trimmed.strip_prefix('>') {
             let tag_line = after_gt.trim();
@@ -467,39 +511,13 @@ fn is_cjk_or_ascii_punct(c: char) -> bool {
 /// コードブロック・インラインコード・数式・エスケープ文字には一切干渉しない。
 fn preprocess_cjk_emphasis(markdown: &str) -> String {
     let mut out_lines = Vec::new();
-    let mut in_code_fence = false;
-    let mut fence_char = '`';
-    let mut fence_len = 0usize;
+    let mut fence = FenceTracker::default();
     let mut in_math_block = false;
 
     for line in markdown.split('\n') {
         let trimmed = line.trim_start();
 
-        if !in_math_block {
-            if let Some(first) = trimmed.chars().next() {
-                if first == '`' || first == '~' {
-                    let count = trimmed.chars().take_while(|&c| c == first).count();
-                    if count >= 3 {
-                        if !in_code_fence {
-                            in_code_fence = true;
-                            fence_char = first;
-                            fence_len = count;
-                            out_lines.push(line.to_string());
-                            continue;
-                        } else if first == fence_char
-                            && count >= fence_len
-                            && trimmed[count..].trim().is_empty()
-                        {
-                            in_code_fence = false;
-                            out_lines.push(line.to_string());
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        if in_code_fence {
+        if !in_math_block && fence.process_line(line) {
             out_lines.push(line.to_string());
             continue;
         }
@@ -725,6 +743,45 @@ fn find_matching_double_delim(chars: &[char], start: usize, delim: char) -> Opti
     None
 }
 
+/// `markdown` / `md` コードブロック内で、ネスト表現のためにバックスラッシュで
+/// エスケープされたフェンス記号（例: `\`\`\`rust`, `\`\`\``, `\```rust`, `\~~~`）を
+/// 通常のフェンス記号（```` ```rust ````, ```` ``` ````, `~~~`）に復元する
+fn unescape_nested_markdown_fences(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for chunk in code.split_inclusive('\n') {
+        let (line_body, newline) = if let Some(stripped) = chunk.strip_suffix('\n') {
+            (stripped, "\n")
+        } else {
+            (chunk, "")
+        };
+        let indent_len = line_body.len() - line_body.trim_start().len();
+        let indent = &line_body[..indent_len];
+        let rest = &line_body[indent_len..];
+
+        if let Some(after) = rest.strip_prefix(r"\`\`\`") {
+            out.push_str(indent);
+            out.push_str("```");
+            out.push_str(after);
+        } else if let Some(after) = rest.strip_prefix(r"\```") {
+            out.push_str(indent);
+            out.push_str("```");
+            out.push_str(after);
+        } else if let Some(after) = rest.strip_prefix(r"\~\~\~") {
+            out.push_str(indent);
+            out.push_str("~~~");
+            out.push_str(after);
+        } else if let Some(after) = rest.strip_prefix(r"\~~~") {
+            out.push_str(indent);
+            out.push_str("~~~");
+            out.push_str(after);
+        } else {
+            out.push_str(line_body);
+        }
+        out.push_str(newline);
+    }
+    out
+}
+
 /// `pulldown-cmark` + `syntect` で Markdown チャンクを HTML に変換する
 fn render_markdown_chunk(
     markdown: &str,
@@ -786,13 +843,21 @@ fn render_markdown_chunk(
                     );
                     events.push(Event::Html(html.into()));
                 } else {
+                    let effective_code = if code_lang.eq_ignore_ascii_case("markdown")
+                        || code_lang.eq_ignore_ascii_case("md")
+                    {
+                        unescape_nested_markdown_fences(&code_buffer)
+                    } else {
+                        code_buffer.clone()
+                    };
                     let syntax = ss
                         .find_syntax_by_token(&code_lang)
                         .unwrap_or_else(|| ss.find_syntax_plain_text());
-                    let highlighted = highlighted_html_for_string(&code_buffer, ss, syntax, theme)
-                        .unwrap_or_else(|_| {
-                            format!("<pre><code>{}</code></pre>", escape_html(&code_buffer))
-                        });
+                    let highlighted =
+                        highlighted_html_for_string(&effective_code, ss, syntax, theme)
+                            .unwrap_or_else(|_| {
+                                format!("<pre><code>{}</code></pre>", escape_html(&effective_code))
+                            });
                     let lang_label = if code_lang.is_empty() {
                         "TEXT".to_string()
                     } else {
@@ -1048,7 +1113,8 @@ pub fn build_standalone_html_with_base_dir(
     h1 {{ font-size: 1.8rem; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25em; margin-top: 0.5em; }}
     h2 {{ font-size: 1.4rem; color: #2563eb; margin-top: 0.9em; }}
     h3 {{ font-size: 1.15rem; margin-top: 0.8em; }}
-    img {{ max-width: 100%; height: auto; border-radius: 4px; }}
+    img {{ max-width: 100% !important; height: auto !important; border-radius: 4px; box-sizing: border-box; }}
+    figure {{ max-width: 100%; margin: 1.2rem 0; }}
     code:not(pre code) {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       background: #eef2f9;
@@ -1098,6 +1164,9 @@ pub fn build_standalone_html_with_base_dir(
       gap: 20px;
       align-items: start;
       margin: 14px 0;
+    }}
+    .lecture-columns > * {{
+      min-width: 0;
     }}
     table {{ width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.94rem; }}
     th, td {{ border: 1px solid #cbd5e1; padding: 8px 12px; text-align: left; }}
