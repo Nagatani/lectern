@@ -645,16 +645,25 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .build()?;
 
     // 5. ヘルプ メニュー
+    let check_update_help =
+        MenuItemBuilder::with_id("app:check-update", "アップデートを確認...").build(app)?;
     let open_help = MenuItemBuilder::with_id("help:open-guide", "Markdown 記法ガイド").build(app)?;
-    let help_submenu = SubmenuBuilder::new(app, "ヘルプ").item(&open_help).build()?;
+    let help_submenu = SubmenuBuilder::new(app, "ヘルプ")
+        .item(&open_help)
+        .separator()
+        .item(&check_update_help)
+        .build()?;
 
     #[allow(unused_mut)]
     let mut root = MenuBuilder::new(app);
 
     #[cfg(target_os = "macos")]
     {
+        let check_update_app =
+            MenuItemBuilder::with_id("app:check-update", "アップデートを確認...").build(app)?;
         let app_submenu = SubmenuBuilder::new(app, "Lectern")
             .item(&PredefinedMenuItem::about(app, Some("Lectern について"), None)?)
+            .item(&check_update_app)
             .separator()
             .item(&PredefinedMenuItem::hide(app, Some("Lectern を隠す"))?)
             .item(&PredefinedMenuItem::hide_others(app, Some("ほかを隠す"))?)
@@ -699,6 +708,8 @@ fn update_recent_workspaces_menu(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(RecentWorkspacesMenuState(Mutex::new(Vec::new())))
         .setup(|app| {
             let menu = build_app_menu(app.handle(), &[])?;

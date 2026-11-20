@@ -353,6 +353,23 @@ $$</code></pre>
       </form>
     </dialog>
 
+    <!-- Self-Update Modal Dialog (GitHub Releases via tauri-plugin-updater) -->
+    <dialog id="modal-updater" class="modal-dialog" closedby="any">
+      <form method="dialog" class="dialog-form">
+        <h2 id="updater-title" class="dialog-title">🔄 アップデートの確認</h2>
+        <p id="updater-message" class="dialog-desc">最新バージョンを確認しています...</p>
+        <pre id="updater-notes" class="updater-notes" hidden></pre>
+        <div id="updater-progress-wrap" class="updater-progress-wrap" hidden>
+          <label for="updater-progress" id="updater-progress-label" class="updater-progress-label">ダウンロード中...</label>
+          <progress id="updater-progress" class="updater-progress" max="100" value="0"></progress>
+        </div>
+        <div class="dialog-actions">
+          <button type="submit" value="close" id="btn-updater-close" class="btn btn-secondary">あとで</button>
+          <button type="button" id="btn-updater-install" class="btn btn-primary" hidden>今すぐアップデートして再起動</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

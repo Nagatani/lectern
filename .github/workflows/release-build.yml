@@ -45,12 +45,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      # 1. Build Tauri bundles (.app, .dmg, setup.exe, .msi)
-      # タグ push 時 (v*) は tauri-action が自動で GitHub Release を作成しインストーラを登録します
+      # 1. Build Tauri bundles (.app, .dmg, setup.exe, .msi) + Updater artifacts (latest.json, .sig)
+      # タグ push 時 (v*) は tauri-action が自動で GitHub Release を作成し、
+      # TAURI_SIGNING_PRIVATE_KEY が設定されていればセルフアップデート用の latest.json と署名済みアーカイブも公開します
       - name: Build Tauri Application & Publish to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Lectern ${{ github.ref_name }}"
@@ -68,7 +71,7 @@ jobs:
               - `lectern-windows-x64-portable.exe`: インストール不要で単体動作するポータブル `.exe`
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && format('{0} --config {1}', matrix.args, '{"bundle":{"createUpdaterArtifacts":true}}') || matrix.args }}
 
       # 2. macOS: Lectern.app を Finder でそのまま解凍して使える .app.zip にパッケージング
       - name: Archive Lectern.app as zip (macOS)

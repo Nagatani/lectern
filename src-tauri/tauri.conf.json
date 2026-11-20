@@ -48,5 +48,13 @@
         "type": "downloadBootstrapper"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/Nagatani/lectern/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

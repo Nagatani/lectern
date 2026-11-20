@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import mermaid from "mermaid";
@@ -152,7 +154,18 @@ const btnClearLogs = document.getElementById("btn-clear-logs") as HTMLButtonElem
 const modalUnsavedClose = document.getElementById("modal-unsaved-close") as HTMLDialogElement;
 const modalUnsavedDesc = document.getElementById("modal-unsaved-desc") as HTMLParagraphElement;
 
+const modalUpdater = document.getElementById("modal-updater") as HTMLDialogElement;
+const elUpdaterTitle = document.getElementById("updater-title") as HTMLHeadingElement;
+const elUpdaterMessage = document.getElementById("updater-message") as HTMLParagraphElement;
+const elUpdaterNotes = document.getElementById("updater-notes") as HTMLPreElement;
+const elUpdaterProgressWrap = document.getElementById("updater-progress-wrap") as HTMLDivElement;
+const elUpdaterProgressLabel = document.getElementById("updater-progress-label") as HTMLLabelElement;
+const elUpdaterProgress = document.getElementById("updater-progress") as HTMLProgressElement;
+const btnUpdaterInstall = document.getElementById("btn-updater-install") as HTMLButtonElement;
+const btnUpdaterClose = document.getElementById("btn-updater-close") as HTMLButtonElement;
+
 let findReplaceController: FindReplaceController | null = null;
+let pendingUpdate: Update | null = null;
 
 // ============================================================================
 // Modern Web Guidance: <dialog closedby="any"> Fallback & Dark Mode Toggle
@@ -1994,6 +2007,9 @@ async function setupNativeMenuListener(): Promise<void> {
           modalHelp.returnValue = "";
           modalHelp.showModal();
           break;
+        case "app:check-update":
+          void checkForUpdatesFlow(true);
+          break;
       }
     });
   } catch (_) {
@@ -2063,8 +2079,122 @@ async function setupUnsavedCloseGuard(): Promise<void> {
   }
 }
 
+// ============================================================================
+// Self-Updater (GitHub Releases: https://github.com/Nagatani/lectern)
+// ============================================================================
+
+async function checkForUpdatesFlow(manual: boolean): Promise<void> {
+  if (manual) {
+    elUpdaterTitle.textContent = "🔄 アップデートの確認";
+    elUpdaterMessage.textContent =
+      "GitHub Releases (Nagatani/lectern) の最新バージョンを確認しています...";
+    elUpdaterNotes.hidden = true;
+    elUpdaterNotes.textContent = "";
+    elUpdaterProgressWrap.hidden = true;
+    btnUpdaterInstall.hidden = true;
+    btnUpdaterInstall.disabled = false;
+    btnUpdaterClose.textContent = "閉じる";
+    modalUpdater.returnValue = "";
+    modalUpdater.showModal();
+  }
+
+  try {
+    const update = await check();
+    if (update) {
+      pendingUpdate = update;
+      elUpdaterTitle.textContent = `🎉 新しいバージョン v${update.version} が利用可能です`;
+      elUpdaterMessage.textContent = `現在のバージョン v${update.currentVersion} から v${update.version} へアップデートできます。`;
+      if (update.body && update.body.trim()) {
+        elUpdaterNotes.textContent = update.body.trim();
+        elUpdaterNotes.hidden = false;
+      } else {
+        elUpdaterNotes.hidden = true;
+      }
+      elUpdaterProgressWrap.hidden = true;
+      btnUpdaterInstall.hidden = false;
+      btnUpdaterInstall.disabled = false;
+      btnUpdaterClose.textContent = "あとで";
+      setStatus(`新しいバージョン v${update.version} が見つかりました`);
+      if (!modalUpdater.open) {
+        modalUpdater.returnValue = "";
+        modalUpdater.showModal();
+      }
+    } else if (manual) {
+      elUpdaterTitle.textContent = "✅ 最新バージョンです";
+      elUpdaterMessage.textContent = "現在お使いの Lectern は最新バージョンです。";
+      btnUpdaterInstall.hidden = true;
+      btnUpdaterClose.textContent = "閉じる";
+      setStatus("アップデート確認完了: 最新バージョンです");
+    }
+  } catch (err) {
+    const errText = String(err);
+    setStatus(`アップデート確認スキップ / エラー: ${errText}`);
+    if (manual) {
+      elUpdaterTitle.textContent = "⚠️ アップデートを確認できませんでした";
+      elUpdaterMessage.textContent =
+        `GitHub Releases からの確認に失敗しました。オフライン環境、または署名公開鍵 (pubkey) / latest.json が未設定の可能性があります。\n詳細: ${errText}`;
+      btnUpdaterInstall.hidden = true;
+      btnUpdaterClose.textContent = "閉じる";
+    }
+  }
+}
+
+async function installPendingUpdate(): Promise<void> {
+  if (!pendingUpdate) return;
+  btnUpdaterInstall.disabled = true;
+  btnUpdaterClose.disabled = true;
+  elUpdaterProgressWrap.hidden = false;
+  elUpdaterProgress.value = 0;
+  elUpdaterProgressLabel.textContent = "アップデートをダウンロード中...";
+
+  try {
+    if (state.isDirty && state.currentFilePath) {
+      await saveCurrentFile();
+    }
+
+    let totalBytes = 0;
+    let downloadedBytes = 0;
+
+    await pendingUpdate.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        totalBytes = event.data.contentLength ?? 0;
+        downloadedBytes = 0;
+        elUpdaterProgressLabel.textContent =
+          totalBytes > 0
+            ? `ダウンロード開始 (0% / ${(totalBytes / 1048576).toFixed(1)} MB)`
+            : "ダウンロード開始...";
+      } else if (event.event === "Progress") {
+        downloadedBytes += event.data.chunkLength;
+        if (totalBytes > 0) {
+          const pct = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
+          elUpdaterProgress.value = pct;
+          elUpdaterProgressLabel.textContent = `ダウンロード中... ${pct}% (${(
+            downloadedBytes / 1048576
+          ).toFixed(1)} / ${(totalBytes / 1048576).toFixed(1)} MB)`;
+        } else {
+          elUpdaterProgressLabel.textContent = `ダウンロード中... ${(
+            downloadedBytes / 1048576
+          ).toFixed(1)} MB`;
+        }
+      } else if (event.event === "Finished") {
+        elUpdaterProgress.value = 100;
+        elUpdaterProgressLabel.textContent = "インストール完了。アプリを再起動します...";
+      }
+    });
+
+    state.isDirty = false;
+    await relaunch();
+  } catch (err) {
+    btnUpdaterInstall.disabled = false;
+    btnUpdaterClose.disabled = false;
+    elUpdaterMessage.textContent = `アップデートの適用に失敗しました: ${String(err)}`;
+    setStatus(`アップデート適用エラー: ${String(err)}`);
+  }
+}
+
 async function initApp(): Promise<void> {
   bindEvents();
+  btnUpdaterInstall.addEventListener("click", () => void installPendingUpdate());
   findReplaceController = setupFindReplaceBar(
     elEditor,
     replaceEditorRangeWithUndo,
@@ -2074,6 +2204,10 @@ async function initApp(): Promise<void> {
   void setupNativeMenuListener();
   void setupUnsavedCloseGuard();
   void setupNativeDragDrop();
+  // 起動後しばらくしてからバックグラウンドで静かにアップデート確認（オフライン時は無視）
+  window.setTimeout(() => {
+    void checkForUpdatesFlow(false);
+  }, 4000);
   try {
     await syncRecentWorkspacesToNativeMenu();
 
