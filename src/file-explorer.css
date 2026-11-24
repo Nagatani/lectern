@@ -1,0 +1,552 @@
+/* ==========================================================================
+   VSCode-Inspired File Explorer Stylesheet
+   Uses host CSS variables from styles.css for automatic Light/Dark support.
+   ========================================================================== */
+
+/* Top Filter & Action Toolbar (injected above #file-tree) */
+.fe-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-surface);
+  flex-shrink: 0;
+}
+
+.fe-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fe-filter-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.fe-filter-icon {
+  position: absolute;
+  left: 7px;
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.fe-filter-input {
+  width: 100%;
+  height: 24px;
+  padding: 2px 22px 2px 24px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+
+.fe-filter-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.78;
+}
+
+.fe-filter-input:focus {
+  border-color: var(--brand);
+  background-color: var(--bg-surface);
+}
+
+.fe-filter-clear {
+  position: absolute;
+  right: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fe-filter-clear:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.fe-filter-clear[hidden] {
+  display: none;
+}
+
+.fe-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.fe-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.fe-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fe-icon-btn:hover {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.fe-icon-btn:focus-visible {
+  outline: 1.5px solid var(--brand);
+  outline-offset: -1px;
+}
+
+/* Tree Container */
+.fe-tree {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  outline: none;
+  --fe-indent: 14px;
+  --fe-row-height: 25px;
+}
+
+.fe-tree:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 55%, transparent);
+}
+
+/* Nested Children List with Vertical Indent Guide */
+.fe-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+.fe-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(13px + var(--tree-depth, 0) * var(--fe-indent));
+  width: 1px;
+  background-color: color-mix(in srgb, var(--border-color) 65%, transparent);
+  pointer-events: none;
+  transition: background-color 0.15s ease;
+}
+
+.fe-tree:hover .fe-children::before {
+  background-color: var(--border-color);
+}
+
+.fe-dir-node.is-selected > .fe-children::before {
+  background-color: color-mix(in srgb, var(--brand) 45%, transparent);
+}
+
+/* Parent Directory ("..") Row */
+.fe-parent-item {
+  margin-bottom: 2px;
+}
+
+.fe-parent-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--fe-row-height);
+  padding: 0 8px 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fe-parent-btn:hover {
+  background-color: var(--bg-elevated);
+  color: var(--brand);
+}
+
+/* Compact Tree Row (shared by folder & file) */
+.fe-node {
+  position: relative;
+}
+
+.fe-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--fe-row-height);
+  padding-left: calc(6px + var(--tree-depth, 0) * var(--fe-indent));
+  padding-right: 6px;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.08s ease;
+}
+
+.fe-row:hover {
+  background-color: var(--bg-elevated);
+}
+
+/* Selected row (keyboard / click / right-click focus) */
+.fe-row.is-selected {
+  background-color: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.fe-tree:focus-within .fe-row.is-selected {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 48%, transparent);
+}
+
+/* Active (currently open in editor) file row */
+.fe-row.is-active {
+  background-color: color-mix(in srgb, var(--brand) 18%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.fe-row.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2.5px;
+  border-radius: 0 2px 2px 0;
+  background-color: var(--brand);
+}
+
+.fe-row.is-active:hover {
+  background-color: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+/* Chevron for folders; spacer for files */
+.fe-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform 0.12s ease, color 0.12s ease;
+}
+
+.fe-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.fe-dir-node.is-open > .fe-row > .fe-chevron {
+  transform: rotate(90deg);
+  color: var(--text-primary);
+}
+
+.fe-chevron-spacer {
+  display: inline-block;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+/* File & Folder Icons */
+.fe-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.fe-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fe-icon.icon-folder {
+  color: #d99b26;
+}
+
+.fe-icon.icon-markdown {
+  color: var(--brand);
+}
+
+.fe-icon.icon-image {
+  color: #10b981;
+}
+
+.fe-icon.icon-pdf {
+  color: #ef4444;
+}
+
+.fe-icon.icon-code {
+  color: #8b5cf6;
+}
+
+/* Entry Label */
+.fe-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fe-match {
+  background-color: color-mix(in srgb, var(--brand) 26%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  font-weight: 700;
+}
+
+/* Openable vs Non-Openable Differentiation */
+.fe-row.is-openable {
+  color: var(--text-primary);
+}
+
+.fe-row.is-unopenable {
+  color: var(--text-muted);
+  opacity: 0.7;
+  cursor: default;
+}
+
+.fe-row.is-unopenable:hover {
+  opacity: 0.92;
+  background-color: color-mix(in srgb, var(--bg-elevated) 70%, transparent);
+}
+
+.fe-row.is-unopenable .fe-icon {
+  opacity: 0.8;
+}
+
+.fe-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1.25;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.fe-badge.badge-openable {
+  background-color: color-mix(in srgb, var(--brand) 14%, transparent);
+  color: var(--brand);
+  border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
+}
+
+.fe-badge.badge-unopenable {
+  background-color: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-color);
+  font-weight: 500;
+}
+
+/* Hover Quick Actions on Rows */
+.fe-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.1s ease;
+}
+
+.fe-row:hover .fe-row-actions,
+.fe-row.is-selected .fe-row-actions,
+.fe-row-actions:focus-within {
+  opacity: 1;
+}
+
+.fe-row-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.fe-row-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.fe-row-btn:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  color: var(--text-primary);
+}
+
+.fe-row-btn.btn-danger-hover:hover {
+  background-color: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+}
+
+/* Empty / Loading State */
+.fe-empty {
+  padding: 4px 10px 4px calc(24px + var(--tree-depth, 0) * var(--fe-indent));
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--text-muted);
+  opacity: 0.78;
+  user-select: none;
+}
+
+/* Inline Input (New File / New Folder / Rename) */
+.fe-inline-row {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 6px 2px calc(6px + var(--tree-depth, 0) * var(--fe-indent));
+}
+
+.fe-inline-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: var(--fe-row-height);
+}
+
+.fe-inline-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+  border: 1.5px solid var(--brand);
+  border-radius: 3px;
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.fe-inline-input.has-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
+}
+
+.fe-inline-error {
+  margin-top: 3px;
+  margin-left: 20px;
+  padding: 3px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #ffffff;
+  background-color: #dc2626;
+  border-radius: 3px;
+  word-break: break-word;
+}
+
+/* Right-Click Context Menu */
+.fe-context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 210px;
+  max-width: 280px;
+  padding: 4px;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.22),
+    0 2px 6px rgba(0, 0, 0, 0.1);
+  user-select: none;
+  outline: none;
+}
+
+.fe-context-menu[hidden] {
+  display: none;
+}
+
+.fe-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fe-menu-item:hover,
+.fe-menu-item:focus-visible {
+  background-color: var(--brand);
+  color: var(--brand-text);
+  outline: none;
+}
+
+.fe-menu-item.is-danger {
+  color: #ef4444;
+}
+
+.fe-menu-item.is-danger:hover,
+.fe-menu-item.is-danger:focus-visible {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+
+.fe-menu-shortcut {
+  font-size: 10.5px;
+  opacity: 0.7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.fe-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background-color: var(--border-color);
+}
