@@ -153,7 +153,8 @@ pub fn compile_lecture_markdown_with_options(
 
     if mode == "slide" {
         for (idx, slide_md) in raw_slides.iter().enumerate() {
-            let slide_inner = render_markdown_chunk(slide_md, &ss, theme, base_dir);
+            let (clean_slide_md, speaker_note) = extract_speaker_notes(slide_md);
+            let slide_inner = render_markdown_chunk(&clean_slide_md, &ss, theme, base_dir);
             let title_header = if idx == 0 {
                 build_doc_header_html(&meta)
             } else {
@@ -167,9 +168,16 @@ pub fn compile_lecture_markdown_with_options(
                 (true, true) => "Lectern".to_string(),
             };
 
+            let note_attr = if speaker_note.is_empty() {
+                String::new()
+            } else {
+                format!(r#" data-speaker-note="{}""#, escape_html(&speaker_note))
+            };
+
             final_html.push_str(&format!(
-                r#"<section class="lecture-slide" data-slide-index="{}">{}{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
+                r#"<section class="lecture-slide" data-slide-index="{}"{}>{}{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
                 idx,
+                note_attr,
                 title_header,
                 slide_inner,
                 escape_html(&footer_label),
@@ -304,6 +312,163 @@ fn split_slides(markdown: &str) -> Vec<String> {
     }
 
     slides
+}
+
+/// インラインコード外の `<!-- note: ...` または `<!-- notes: ...` (大文字小文字不問) の開始位置を探す。
+/// 見つかった場合 `(comment_start_byte, body_start_byte)` を返す。
+fn find_note_comment_start(line: &str) -> Option<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        // インラインコード (`...`, ``...``) 内はスキップする
+        if bytes[i] == b'`' {
+            let mut tick_count = 0;
+            while i + tick_count < len && bytes[i + tick_count] == b'`' {
+                tick_count += 1;
+            }
+            let mut j = i + tick_count;
+            let mut closed = false;
+            while j < len {
+                if bytes[j] == b'`' {
+                    let mut close_count = 0;
+                    while j + close_count < len && bytes[j + close_count] == b'`' {
+                        close_count += 1;
+                    }
+                    if close_count == tick_count {
+                        i = j + close_count;
+                        closed = true;
+                        break;
+                    }
+                    j += close_count;
+                } else {
+                    j += 1;
+                }
+            }
+            if !closed {
+                i += tick_count;
+            }
+            continue;
+        }
+
+        if i + 4 <= len && &bytes[i..i + 4] == b"<!--" {
+            let mut pos = i + 4;
+            while pos < len && matches!(bytes[pos], b' ' | b'\t') {
+                pos += 1;
+            }
+            // "notes" または "note" を大文字小文字不問でマッチ
+            let after_kw = if pos + 5 <= len && bytes[pos..pos + 5].eq_ignore_ascii_case(b"notes") {
+                Some(pos + 5)
+            } else if pos + 4 <= len && bytes[pos..pos + 4].eq_ignore_ascii_case(b"note") {
+                Some(pos + 4)
+            } else {
+                None
+            };
+
+            if let Some(mut colon_pos) = after_kw {
+                while colon_pos < len && matches!(bytes[colon_pos], b' ' | b'\t') {
+                    colon_pos += 1;
+                }
+                if colon_pos < len && bytes[colon_pos] == b':' {
+                    return Some((i, colon_pos + 1));
+                }
+            }
+            i += 4;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    None
+}
+
+/// スライド内のスピーカーノートコメント (`<!-- note: ... -->` / `<!-- notes: ... -->`) を
+/// コードフェンス外からのみ抽出し、本文から取り除いた `(clean_markdown, speaker_notes)` を返す。
+fn extract_speaker_notes(slide_md: &str) -> (String, String) {
+    let mut cleaned_lines: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut fence = FenceTracker::default();
+    let mut in_note = false;
+    let mut current_note = String::new();
+
+    for line in slide_md.lines() {
+        if in_note {
+            if let Some(end_idx) = line.find("-->") {
+                current_note.push_str(&line[..end_idx]);
+                let trimmed_note = current_note.trim();
+                if !trimmed_note.is_empty() {
+                    notes.push(trimmed_note.to_string());
+                }
+                current_note.clear();
+                in_note = false;
+
+                let after = line[end_idx + 3..].trim();
+                if !after.is_empty() {
+                    cleaned_lines.push(after.to_string());
+                }
+            } else {
+                current_note.push_str(line);
+                current_note.push('\n');
+            }
+            continue;
+        }
+
+        if fence.process_line(line) {
+            cleaned_lines.push(line.to_string());
+            continue;
+        }
+
+        let mut remaining = line;
+        let mut kept = String::new();
+        let mut matched_any = false;
+
+        while let Some((comment_start, body_start)) = find_note_comment_start(remaining) {
+            matched_any = true;
+            kept.push_str(&remaining[..comment_start]);
+            let body_slice = &remaining[body_start..];
+            if let Some(end_rel) = body_slice.find("-->") {
+                let note_text = body_slice[..end_rel].trim();
+                if !note_text.is_empty() {
+                    notes.push(note_text.to_string());
+                }
+                remaining = &body_slice[end_rel + 3..];
+            } else {
+                in_note = true;
+                let first_part = body_slice.trim_start();
+                if !first_part.is_empty() {
+                    current_note.push_str(first_part);
+                    current_note.push('\n');
+                }
+                remaining = "";
+                break;
+            }
+        }
+
+        if matched_any {
+            kept.push_str(remaining);
+            if !kept.trim().is_empty() {
+                cleaned_lines.push(kept.trim_end().to_string());
+            }
+        } else {
+            cleaned_lines.push(line.to_string());
+        }
+    }
+
+    if in_note {
+        let trimmed_note = current_note.trim();
+        if !trimmed_note.is_empty() {
+            notes.push(trimmed_note.to_string());
+        }
+    }
+
+    let mut cleaned = cleaned_lines.join("\n");
+    if slide_md.ends_with('\n') && !cleaned.is_empty() {
+        cleaned.push('\n');
+    }
+
+    (cleaned, notes.join("\n\n"))
 }
 
 /// GitHub スタイルのコールアウト (`> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`) を HTML ブロックに変換する
@@ -976,20 +1141,129 @@ pub fn build_standalone_html_with_base_dir(
           color: #17202a;
           border: 1px solid #d7e0ec;
           border-radius: 12px;
-          padding: 44px 56px;
+          padding: 34px 48px 26px;
           box-shadow: 0 10px 28px rgba(0,0,0,0.08);
           display: flex;
           flex-direction: column;
           justify-content: flex-start;
           box-sizing: border-box;
+          overflow-y: auto;
+          line-height: 1.55;
           page-break-after: always;
           break-after: page;
+        }
+        .lecture-slide > :first-child {
+          margin-top: 0;
+        }
+        .lecture-slide .lecture-doc-header {
+          margin-bottom: 14px;
+          padding-bottom: 12px;
+        }
+        .lecture-slide .lecture-doc-title {
+          font-size: 26px;
+          margin: 0 0 4px 0;
+          line-height: 1.3;
+        }
+        .lecture-slide .lecture-doc-description {
+          margin-top: 10px;
+          padding: 8px 12px;
+        }
+        .lecture-slide h1 {
+          font-size: 1.65rem;
+          line-height: 1.3;
+          margin: 0 0 0.55rem;
+          padding-bottom: 0.2em;
+        }
+        .lecture-slide h2 {
+          font-size: 1.32rem;
+          line-height: 1.35;
+          margin: 0.45rem 0 0.45rem;
+        }
+        .lecture-slide h3 {
+          font-size: 1.1rem;
+          line-height: 1.35;
+          margin: 0.4rem 0 0.35rem;
+        }
+        .lecture-slide p {
+          margin: 0.45rem 0;
+          line-height: 1.6;
+        }
+        .lecture-slide ul,
+        .lecture-slide ol {
+          margin: 0.45rem 0 0.55rem;
+          line-height: 1.55;
+        }
+        .lecture-slide li {
+          margin-bottom: 0.26rem;
+        }
+        .lecture-slide .code-block-wrapper {
+          margin: 10px 0;
+          flex-shrink: 0;
+        }
+        .lecture-slide .code-block-wrapper pre {
+          padding: 10px 14px !important;
+          font-size: 12px;
+          line-height: 1.45;
+          max-height: 310px;
+          overflow: auto;
+        }
+        .lecture-slide .mermaid-container {
+          margin: 10px 0;
+          padding: 10px 14px;
+          max-height: 330px;
+          overflow: auto;
+        }
+        .lecture-slide .mermaid-container svg {
+          max-height: 300px !important;
+          width: auto !important;
+          max-width: 100% !important;
+        }
+        .lecture-slide table {
+          margin: 10px 0;
+          font-size: 0.86rem;
+          line-height: 1.45;
+        }
+        .lecture-slide th,
+        .lecture-slide td {
+          padding: 6px 10px;
+        }
+        .lecture-slide img {
+          max-height: 340px !important;
+          width: auto !important;
+          max-width: 100% !important;
+          object-fit: contain;
+          display: block;
+          margin: 0.45rem auto;
+        }
+        .lecture-slide .callout {
+          margin: 10px 0;
+          padding: 10px 14px;
+          font-size: 0.92rem;
+        }
+        .lecture-slide blockquote {
+          margin: 10px 0;
+          padding: 8px 14px;
+        }
+        .lecture-slide .math-display {
+          margin: 10px 0;
+        }
+        .lecture-slide .lecture-columns {
+          gap: 20px;
+          margin: 10px 0;
+        }
+        .lecture-slide .slide-footer {
+          margin-top: auto;
+          padding-top: 8px;
+          flex-shrink: 0;
+          font-size: 11.5px;
         }
         @media print {
           body.mode-slide {
             background: #ffffff;
             margin: 0;
             padding: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
           }
           body.mode-slide .lecture-render-root {
             padding: 0;
@@ -1001,8 +1275,15 @@ pub fn build_standalone_html_with_base_dir(
             border: none;
             border-radius: 0;
             box-shadow: none;
+            overflow: hidden !important;
             page-break-after: always;
             break-after: page;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .lecture-slide:last-child {
+            page-break-after: auto;
+            break-after: auto;
           }
         }
         "#
@@ -1377,27 +1658,111 @@ pub fn build_slideshow_html_with_base_dir(
       display: flex !important;
     }
 
-    /* Overview Grid Mode (O / G key) */
+    @keyframes lecternSlideEnter {
+      from {
+        opacity: 0;
+        transform: scale(var(--slide-scale, 1)) translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: scale(var(--slide-scale, 1)) translateY(0);
+      }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      body.mode-slideshow .lecture-slide.is-active {
+        animation: lecternSlideEnter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      body.mode-slideshow .lecture-slide.is-active,
+      .slideshow-hud,
+      .slideshow-progress-fill,
+      .slideshow-notes-drawer,
+      .slideshow-edge-nav,
+      .slideshow-edge-nav span,
+      .slide-thumb-wrap {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+
+    /* Clean Edge Hover Navigation Zones (never interfere with slide text selection, links, or checkboxes) */
+    .slideshow-edge-nav {
+      position: fixed;
+      top: 56px;
+      bottom: 74px;
+      width: 52px;
+      z-index: 9990;
+      border: none;
+      background: transparent;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #f8fafc;
+      opacity: 0;
+      transition: opacity 0.18s ease;
+    }
+    .slideshow-edge-nav.edge-prev { left: 0; }
+    .slideshow-edge-nav.edge-next { right: 0; }
+    .slideshow-edge-nav span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 54px;
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      font-size: 22px;
+      line-height: 1;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+      transition: background-color 0.15s ease, transform 0.15s ease;
+    }
+    .slideshow-edge-nav:hover,
+    .slideshow-edge-nav:focus-visible {
+      opacity: 1;
+      outline: none;
+    }
+    .slideshow-edge-nav:hover span {
+      background: rgba(30, 41, 59, 0.92);
+      transform: scale(1.04);
+    }
+    .slideshow-edge-nav:focus-visible span {
+      outline: 2px solid #38bdf8;
+      outline-offset: 2px;
+    }
+    .slideshow-edge-nav:disabled,
+    body.mode-slideshow.is-overview .slideshow-edge-nav {
+      display: none !important;
+    }
+
+    /* Overview Grid Mode (O / G key) with Slide Title Preview */
     body.mode-slideshow.is-overview {
       overflow-y: auto;
     }
     body.mode-slideshow.is-overview .lecture-render-root {
       position: static;
       display: grid !important;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(344px, 1fr));
       gap: 24px;
-      padding: 32px 32px 96px !important;
+      padding: 32px 32px 104px !important;
       align-items: start !important;
       justify-items: center !important;
     }
     body.mode-slideshow.is-overview .slide-thumb-wrap {
       position: relative;
       width: 336px;
-      height: 189px;
-      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      border-radius: 10px;
       overflow: hidden;
       cursor: pointer;
-      outline: 2px solid rgba(255, 255, 255, 0.16);
+      background: #111827;
+      outline: 2px solid rgba(255, 255, 255, 0.14);
       outline-offset: 2px;
       transition: outline-color 0.15s ease, transform 0.15s ease;
     }
@@ -1408,7 +1773,14 @@ pub fn build_slideshow_html_with_base_dir(
     body.mode-slideshow.is-overview .slide-thumb-wrap.is-current {
       outline: 3px solid #38bdf8;
     }
-    body.mode-slideshow.is-overview .slide-thumb-wrap .lecture-slide {
+    body.mode-slideshow.is-overview .slide-thumb-stage {
+      position: relative;
+      width: 336px;
+      height: 189px;
+      overflow: hidden;
+      background: #0f172a;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-stage .lecture-slide {
       display: flex !important;
       position: absolute;
       top: 0;
@@ -1418,19 +1790,42 @@ pub fn build_slideshow_html_with_base_dir(
       pointer-events: none;
       border-radius: 0 !important;
       box-shadow: none !important;
+      animation: none !important;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-caption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      background: rgba(15, 23, 42, 0.94);
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      font-size: 12px;
     }
     body.mode-slideshow.is-overview .slide-thumb-badge {
-      position: absolute;
-      right: 8px;
-      bottom: 8px;
-      z-index: 3;
-      padding: 2px 8px;
+      flex-shrink: 0;
+      padding: 1px 7px;
       border-radius: 999px;
       font-size: 11px;
       font-weight: 700;
-      background: rgba(15, 23, 42, 0.82);
-      color: #f8fafc;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-variant-numeric: tabular-nums;
+      background: rgba(56, 189, 248, 0.2);
+      color: #7dd3fc;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 500;
+      color: #f1f5f9;
+    }
+    body.mode-slideshow.is-overview .slide-thumb-note-dot {
+      flex-shrink: 0;
+      font-size: 11px;
+      opacity: 0.88;
     }
 
     /* Presenter Floating HUD */
@@ -1442,10 +1837,10 @@ pub fn build_slideshow_html_with_base_dir(
       z-index: 9999;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
       padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(15, 23, 42, 0.78);
+      background: rgba(15, 23, 42, 0.82);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 255, 255, 0.16);
@@ -1459,11 +1854,13 @@ pub fn build_slideshow_html_with_base_dir(
       opacity: 0;
       pointer-events: none;
     }
-    .slideshow-hud:hover {
+    .slideshow-hud:hover,
+    .slideshow-hud:focus-within {
       opacity: 1 !important;
       pointer-events: auto !important;
     }
     .slideshow-hud button {
+      position: relative;
       border: none;
       background: transparent;
       color: #f8fafc;
@@ -1473,17 +1870,22 @@ pub fn build_slideshow_html_with_base_dir(
       padding: 5px 10px;
       border-radius: 999px;
       cursor: pointer;
+      white-space: nowrap;
       transition: background-color 0.15s ease;
     }
     .slideshow-hud button:hover {
       background: rgba(255, 255, 255, 0.16);
+    }
+    .slideshow-hud button.is-active-btn {
+      background: rgba(56, 189, 248, 0.25);
+      color: #7dd3fc;
     }
     .slideshow-hud button:disabled {
       opacity: 0.35;
       cursor: default;
     }
     .slideshow-hud .hud-counter {
-      min-width: 58px;
+      min-width: 62px;
       text-align: center;
       font-variant-numeric: tabular-nums;
       font-weight: 700;
@@ -1494,6 +1896,244 @@ pub fn build_slideshow_html_with_base_dir(
       height: 16px;
       background: rgba(255, 255, 255, 0.2);
       margin: 0 2px;
+    }
+    .hud-note-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #38bdf8;
+      margin-left: 5px;
+      vertical-align: middle;
+    }
+
+    /* Speaker Notes Drawer (N key) */
+    .slideshow-notes-drawer {
+      position: fixed;
+      left: 50%;
+      bottom: 68px;
+      transform: translateX(-50%);
+      z-index: 9996;
+      width: min(760px, calc(100vw - 32px));
+      max-height: 30vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.48);
+      overflow: hidden;
+    }
+    .slideshow-notes-drawer[hidden] {
+      display: none !important;
+    }
+    .slideshow-notes-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 14px;
+      background: rgba(30, 41, 59, 0.75);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      font-size: 12px;
+      font-weight: 700;
+      color: #7dd3fc;
+    }
+    .slideshow-notes-slide-label {
+      color: #94a3b8;
+      font-weight: 500;
+      margin-left: 8px;
+    }
+    .slideshow-notes-close,
+    .slideshow-modal-close {
+      border: none;
+      background: transparent;
+      color: #cbd5e1;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+    .slideshow-notes-close:hover,
+    .slideshow-modal-close:hover {
+      background: rgba(255, 255, 255, 0.14);
+      color: #ffffff;
+    }
+    .slideshow-notes-body {
+      padding: 12px 16px;
+      overflow-y: auto;
+      font-size: 13.5px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      color: #f1f5f9;
+    }
+    .slideshow-notes-body.is-empty {
+      color: #94a3b8;
+      font-style: italic;
+    }
+
+    /* Slide Jump / TOC Popover (T key or click counter) */
+    .slideshow-toc-menu {
+      position: fixed;
+      left: 50%;
+      bottom: 68px;
+      transform: translateX(-50%);
+      z-index: 9997;
+      width: min(440px, calc(100vw - 32px));
+      max-height: 56vh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.52);
+      overflow: hidden;
+    }
+    .slideshow-toc-menu[hidden] {
+      display: none !important;
+    }
+    .slideshow-toc-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 14px;
+      background: rgba(30, 41, 59, 0.78);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #e2e8f0;
+    }
+    .slideshow-toc-list {
+      overflow-y: auto;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .ss-toc-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: #e2e8f0;
+      text-align: left;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .ss-toc-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .ss-toc-item.is-current {
+      background: rgba(56, 189, 248, 0.22);
+      color: #ffffff;
+      font-weight: 600;
+    }
+    .ss-toc-num {
+      flex-shrink: 0;
+      min-width: 24px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #7dd3fc;
+    }
+    .ss-toc-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ss-toc-note {
+      flex-shrink: 0;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    /* Keyboard Shortcut Help Overlay (? key) */
+    .slideshow-help-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    .slideshow-help-overlay[hidden] {
+      display: none !important;
+    }
+    .slideshow-help-card {
+      width: min(500px, 100%);
+      border-radius: 14px;
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+      overflow: hidden;
+    }
+    .slideshow-help-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: rgba(30, 41, 59, 0.8);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .slideshow-help-list {
+      margin: 0;
+      padding: 12px 16px 16px;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      font-size: 13px;
+    }
+    .slideshow-help-list li {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      line-height: 1.4;
+    }
+    .slideshow-help-keys {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .slideshow-help-keys kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 11.5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: #1e293b;
+      color: #7dd3fc;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.35);
     }
 
     /* Bottom Progress Bar */
@@ -1527,16 +2167,28 @@ pub fn build_slideshow_html_with_base_dir(
       body.mode-slideshow .lecture-slide {
         display: flex !important;
         transform: none !important;
+        animation: none !important;
         width: 100vw !important;
         height: 100vh !important;
+        overflow: hidden !important;
         box-shadow: none !important;
         border: none !important;
         border-radius: 0 !important;
         page-break-after: always;
         break-after: page;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      body.mode-slideshow .lecture-slide:last-child {
+        page-break-after: auto;
+        break-after: auto;
       }
       .slideshow-hud,
-      .slideshow-progress {
+      .slideshow-progress,
+      .slideshow-edge-nav,
+      .slideshow-notes-drawer,
+      .slideshow-toc-menu,
+      .slideshow-help-overlay {
         display: none !important;
       }
     }
@@ -1544,13 +2196,54 @@ pub fn build_slideshow_html_with_base_dir(
 </head>"#;
 
     let slideshow_hud_and_script = r##"
+  <button type="button" id="ss-edge-prev" class="slideshow-edge-nav edge-prev" aria-label="前のスライド" title="前のスライド (←)"><span>‹</span></button>
+  <button type="button" id="ss-edge-next" class="slideshow-edge-nav edge-next" aria-label="次のスライド" title="次のスライド (→)"><span>›</span></button>
+
+  <aside id="ss-notes-drawer" class="slideshow-notes-drawer" hidden aria-label="スピーカーノート">
+    <div class="slideshow-notes-header">
+      <div>🗒 スピーカーノート<span id="ss-notes-slide-label" class="slideshow-notes-slide-label"></span></div>
+      <button type="button" id="ss-notes-close" class="slideshow-notes-close" aria-label="ノートを閉じる">✕</button>
+    </div>
+    <div id="ss-notes-body" class="slideshow-notes-body"></div>
+  </aside>
+
+  <div id="ss-toc-menu" class="slideshow-toc-menu" hidden role="dialog" aria-label="スライド目次">
+    <div class="slideshow-toc-header">
+      <span>📑 目次・スライドジャンプ</span>
+      <button type="button" id="ss-toc-close" class="slideshow-modal-close" aria-label="目次を閉じる">✕</button>
+    </div>
+    <div id="ss-toc-list" class="slideshow-toc-list" role="listbox"></div>
+  </div>
+
+  <div id="ss-help-overlay" class="slideshow-help-overlay" hidden role="dialog" aria-modal="true" aria-label="キーボードショートカット一覧">
+    <div class="slideshow-help-card">
+      <div class="slideshow-help-header">
+        <span>⌨️ キーボードショートカット</span>
+        <button type="button" id="ss-help-close" class="slideshow-modal-close" aria-label="ヘルプを閉じる">✕</button>
+      </div>
+      <ul class="slideshow-help-list">
+        <li><span>次のスライド</span><span class="slideshow-help-keys"><kbd>→</kbd><kbd>↓</kbd><kbd>Space</kbd><kbd>PgDn</kbd><kbd>Enter</kbd></span></li>
+        <li><span>前のスライド</span><span class="slideshow-help-keys"><kbd>←</kbd><kbd>↑</kbd><kbd>PgUp</kbd><kbd>Backspace</kbd></span></li>
+        <li><span>最初 / 最後のスライド</span><span class="slideshow-help-keys"><kbd>Home</kbd><kbd>End</kbd></span></li>
+        <li><span>スライド一覧（オーバービュー）</span><span class="slideshow-help-keys"><kbd>O</kbd><kbd>G</kbd></span></li>
+        <li><span>目次・スライドジャンプ</span><span class="slideshow-help-keys"><kbd>T</kbd></span></li>
+        <li><span>スピーカーノート表示切替</span><span class="slideshow-help-keys"><kbd>N</kbd></span></li>
+        <li><span>全画面表示切替</span><span class="slideshow-help-keys"><kbd>F</kbd></span></li>
+        <li><span>ショートカットヘルプ</span><span class="slideshow-help-keys"><kbd>?</kbd></span></li>
+        <li><span>オーバーレイ・一覧を閉じる</span><span class="slideshow-help-keys"><kbd>Esc</kbd></span></li>
+      </ul>
+    </div>
+  </div>
+
   <div class="slideshow-hud" role="toolbar" aria-label="スライドショー操作">
     <button type="button" id="ss-prev" title="前のスライド (← / PageUp)">◀</button>
-    <span id="ss-counter" class="hud-counter">1 / 1</span>
+    <button type="button" id="ss-counter" class="hud-counter" title="目次・スライドジャンプ (T)" aria-haspopup="dialog" aria-expanded="false">1 / 1</button>
     <button type="button" id="ss-next" title="次のスライド (→ / Space / PageDown)">▶</button>
     <span class="hud-sep" aria-hidden="true"></span>
     <button type="button" id="ss-overview" title="スライド一覧グリッド (O / G)">⊞ 一覧</button>
+    <button type="button" id="ss-notes-toggle" title="スピーカーノート (N)">🗒 ノート<span id="ss-notes-dot" class="hud-note-dot" hidden></span></button>
     <button type="button" id="ss-fullscreen" title="全画面表示切替 (F)">⛶ 全画面</button>
+    <button type="button" id="ss-help-toggle" title="ショートカット一覧 (?)">?</button>
   </div>
   <div class="slideshow-progress" aria-hidden="true">
     <div id="ss-progress-fill" class="slideshow-progress-fill"></div>
@@ -1563,14 +2256,49 @@ pub fn build_slideshow_html_with_base_dir(
 
       const btnPrev = document.getElementById("ss-prev");
       const btnNext = document.getElementById("ss-next");
+      const btnEdgePrev = document.getElementById("ss-edge-prev");
+      const btnEdgeNext = document.getElementById("ss-edge-next");
       const btnOverview = document.getElementById("ss-overview");
+      const btnNotes = document.getElementById("ss-notes-toggle");
+      const elNotesDot = document.getElementById("ss-notes-dot");
       const btnFullscreen = document.getElementById("ss-fullscreen");
+      const btnHelp = document.getElementById("ss-help-toggle");
       const elCounter = document.getElementById("ss-counter");
       const elProgress = document.getElementById("ss-progress-fill");
 
+      const notesDrawer = document.getElementById("ss-notes-drawer");
+      const notesBody = document.getElementById("ss-notes-body");
+      const notesSlideLabel = document.getElementById("ss-notes-slide-label");
+      const btnNotesClose = document.getElementById("ss-notes-close");
+
+      const tocMenu = document.getElementById("ss-toc-menu");
+      const tocList = document.getElementById("ss-toc-list");
+      const btnTocClose = document.getElementById("ss-toc-close");
+
+      const helpOverlay = document.getElementById("ss-help-overlay");
+      const btnHelpClose = document.getElementById("ss-help-close");
+
       let current = 0;
       let inOverview = false;
+      let notesOpen = false;
+      let tocOpen = false;
+      let helpOpen = false;
       let hudTimer = null;
+
+      function getSlideTitle(slideEl, idx) {
+        const heading = slideEl.querySelector(".lecture-doc-title, h1, h2, h3");
+        const raw = heading ? (heading.textContent || "").trim() : "";
+        return raw || ("スライド " + (idx + 1));
+      }
+
+      function getSlideNote(slideEl) {
+        return (slideEl.getAttribute("data-speaker-note") || "").trim();
+      }
+
+      const slideMeta = slides.map((s, idx) => ({
+        title: getSlideTitle(s, idx),
+        hasNote: getSlideNote(s).length > 0
+      }));
 
       function parseHashIndex() {
         const m = /^#(\d+)$/.exec(window.location.hash);
@@ -1586,17 +2314,116 @@ pub fn build_slideshow_html_with_base_dir(
         document.documentElement.style.setProperty("--slide-scale", String(Math.max(0.2, scale)));
       }
 
+      function renderNotes() {
+        const note = getSlideNote(slides[current]);
+        const hasNote = note.length > 0;
+        if (elNotesDot) elNotesDot.hidden = !hasNote;
+        if (notesSlideLabel) {
+          notesSlideLabel.textContent = "— " + (current + 1) + " / " + slides.length + " " + slideMeta[current].title;
+        }
+        if (notesBody) {
+          notesBody.textContent = hasNote ? note : "このスライドにはスピーカーノートがありません。";
+          notesBody.classList.toggle("is-empty", !hasNote);
+        }
+      }
+
+      function renderToc() {
+        if (!tocList) return;
+        tocList.innerHTML = "";
+        slides.forEach((_, idx) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "ss-toc-item" + (idx === current ? " is-current" : "");
+          item.setAttribute("role", "option");
+          item.setAttribute("aria-selected", idx === current ? "true" : "false");
+
+          const num = document.createElement("span");
+          num.className = "ss-toc-num";
+          num.textContent = String(idx + 1);
+
+          const title = document.createElement("span");
+          title.className = "ss-toc-title";
+          title.textContent = slideMeta[idx].title;
+
+          item.appendChild(num);
+          item.appendChild(title);
+
+          if (slideMeta[idx].hasNote) {
+            const noteIcon = document.createElement("span");
+            noteIcon.className = "ss-toc-note";
+            noteIcon.textContent = "🗒";
+            noteIcon.title = "スピーカーノートあり";
+            item.appendChild(noteIcon);
+          }
+
+          item.addEventListener("click", () => {
+            setToc(false);
+            goTo(idx);
+          });
+          tocList.appendChild(item);
+        });
+      }
+
+      function setNotes(open) {
+        notesOpen = open;
+        if (notesDrawer) notesDrawer.hidden = !open;
+        if (btnNotes) btnNotes.classList.toggle("is-active-btn", open);
+        if (open) {
+          setToc(false);
+          renderNotes();
+          document.body.classList.remove("hud-hidden");
+        } else {
+          wakeHud();
+        }
+      }
+
+      function setToc(open) {
+        tocOpen = open;
+        if (tocMenu) tocMenu.hidden = !open;
+        if (elCounter) {
+          elCounter.setAttribute("aria-expanded", open ? "true" : "false");
+          elCounter.classList.toggle("is-active-btn", open);
+        }
+        if (open) {
+          setNotes(false);
+          setHelp(false);
+          renderToc();
+          document.body.classList.remove("hud-hidden");
+          const activeItem = tocList?.querySelector(".ss-toc-item.is-current");
+          activeItem?.scrollIntoView({ block: "nearest" });
+        } else {
+          wakeHud();
+        }
+      }
+
+      function setHelp(open) {
+        helpOpen = open;
+        if (helpOverlay) helpOverlay.hidden = !open;
+        if (btnHelp) btnHelp.classList.toggle("is-active-btn", open);
+        if (open) {
+          setToc(false);
+          document.body.classList.remove("hud-hidden");
+        } else {
+          wakeHud();
+        }
+      }
+
       function renderCurrent() {
         slides.forEach((s, idx) => {
           s.classList.toggle("is-active", idx === current);
         });
         if (elCounter) elCounter.textContent = (current + 1) + " / " + slides.length;
-        if (btnPrev) btnPrev.disabled = current <= 0;
-        if (btnNext) btnNext.disabled = current >= slides.length - 1;
+        const atFirst = current <= 0;
+        const atLast = current >= slides.length - 1;
+        if (btnPrev) btnPrev.disabled = atFirst;
+        if (btnNext) btnNext.disabled = atLast;
+        if (btnEdgePrev) btnEdgePrev.disabled = atFirst;
+        if (btnEdgeNext) btnEdgeNext.disabled = atLast;
         if (elProgress) {
           const pct = slides.length <= 1 ? 100 : ((current + 1) / slides.length) * 100;
           elProgress.style.width = pct.toFixed(1) + "%";
         }
+        renderNotes();
         const targetHash = "#" + (current + 1);
         if (window.location.hash !== targetHash) {
           try { history.replaceState(null, "", targetHash); } catch (_) {}
@@ -1613,20 +2440,48 @@ pub fn build_slideshow_html_with_base_dir(
         if (inOverview === enable) return;
         inOverview = enable;
         document.body.classList.toggle("is-overview", enable);
-        if (btnOverview) btnOverview.textContent = enable ? "✕ 戻る" : "⊞ 一覧";
+        if (btnOverview) {
+          btnOverview.textContent = enable ? "✕ 戻る" : "⊞ 一覧";
+          btnOverview.classList.toggle("is-active-btn", enable);
+        }
 
         if (enable) {
+          setToc(false);
           document.body.classList.remove("hud-hidden");
           root.innerHTML = "";
           slides.forEach((slideEl, idx) => {
             const wrap = document.createElement("div");
             wrap.className = "slide-thumb-wrap" + (idx === current ? " is-current" : "");
-            wrap.title = "スライド " + (idx + 1) + " へ移動";
+            wrap.title = (idx + 1) + ". " + slideMeta[idx].title;
+
+            const stage = document.createElement("div");
+            stage.className = "slide-thumb-stage";
+            stage.appendChild(slideEl);
+
+            const caption = document.createElement("div");
+            caption.className = "slide-thumb-caption";
+
             const badge = document.createElement("span");
             badge.className = "slide-thumb-badge";
             badge.textContent = String(idx + 1);
-            wrap.appendChild(slideEl);
-            wrap.appendChild(badge);
+
+            const title = document.createElement("span");
+            title.className = "slide-thumb-title";
+            title.textContent = slideMeta[idx].title;
+
+            caption.appendChild(badge);
+            caption.appendChild(title);
+
+            if (slideMeta[idx].hasNote) {
+              const noteDot = document.createElement("span");
+              noteDot.className = "slide-thumb-note-dot";
+              noteDot.textContent = "🗒";
+              noteDot.title = "スピーカーノートあり";
+              caption.appendChild(noteDot);
+            }
+
+            wrap.appendChild(stage);
+            wrap.appendChild(caption);
             wrap.addEventListener("click", () => goTo(idx));
             root.appendChild(wrap);
           });
@@ -1649,7 +2504,7 @@ pub fn build_slideshow_html_with_base_dir(
       function wakeHud() {
         document.body.classList.remove("hud-hidden");
         if (hudTimer) clearTimeout(hudTimer);
-        if (!inOverview) {
+        if (!inOverview && !notesOpen && !tocOpen && !helpOpen) {
           hudTimer = setTimeout(() => {
             document.body.classList.add("hud-hidden");
           }, 2600);
@@ -1658,18 +2513,77 @@ pub fn build_slideshow_html_with_base_dir(
 
       btnPrev?.addEventListener("click", () => goTo(current - 1));
       btnNext?.addEventListener("click", () => goTo(current + 1));
+      btnEdgePrev?.addEventListener("click", () => goTo(current - 1));
+      btnEdgeNext?.addEventListener("click", () => goTo(current + 1));
       btnOverview?.addEventListener("click", () => setOverview(!inOverview));
+      btnNotes?.addEventListener("click", () => setNotes(!notesOpen));
+      btnNotesClose?.addEventListener("click", () => setNotes(false));
+      elCounter?.addEventListener("click", () => setToc(!tocOpen));
+      btnTocClose?.addEventListener("click", () => setToc(false));
       btnFullscreen?.addEventListener("click", toggleFullscreen);
+      btnHelp?.addEventListener("click", () => setHelp(!helpOpen));
+      btnHelpClose?.addEventListener("click", () => setHelp(false));
+
+      helpOverlay?.addEventListener("click", (e) => {
+        if (e.target === helpOverlay) setHelp(false);
+      });
+
+      document.addEventListener("click", (e) => {
+        if (tocOpen && tocMenu && !tocMenu.contains(e.target) && e.target !== elCounter) {
+          setToc(false);
+        }
+      });
 
       window.addEventListener("keydown", (e) => {
-        if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+        const target = e.target;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        const isInteractiveFocus =
+          target &&
+          (target.tagName === "A" || target.tagName === "BUTTON" || target.tagName === "SUMMARY");
+
         wakeHud();
-        if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown" || e.key === " " || e.key === "Enter") {
-          if (inOverview) return;
+
+        if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+          e.preventDefault();
+          setHelp(!helpOpen);
+          return;
+        }
+        if (e.key === "Escape") {
+          if (helpOpen) {
+            e.preventDefault();
+            setHelp(false);
+          } else if (tocOpen) {
+            e.preventDefault();
+            setToc(false);
+          } else if (inOverview) {
+            e.preventDefault();
+            setOverview(false);
+          } else if (notesOpen) {
+            e.preventDefault();
+            setNotes(false);
+          }
+          return;
+        }
+        if (helpOpen) return;
+
+        if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown") {
+          if (inOverview || tocOpen) return;
+          e.preventDefault();
+          goTo(current + 1);
+        } else if ((e.key === " " || e.key === "Enter") && !isInteractiveFocus) {
+          if (inOverview || tocOpen) return;
           e.preventDefault();
           goTo(current + 1);
         } else if (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp" || e.key === "Backspace") {
-          if (inOverview) return;
+          if (inOverview || tocOpen) return;
           e.preventDefault();
           goTo(current - 1);
         } else if (e.key === "Home") {
@@ -1681,12 +2595,15 @@ pub fn build_slideshow_html_with_base_dir(
         } else if (e.key.toLowerCase() === "o" || e.key.toLowerCase() === "g") {
           e.preventDefault();
           setOverview(!inOverview);
+        } else if (e.key.toLowerCase() === "t") {
+          e.preventDefault();
+          setToc(!tocOpen);
+        } else if (e.key.toLowerCase() === "n") {
+          e.preventDefault();
+          setNotes(!notesOpen);
         } else if (e.key.toLowerCase() === "f") {
           e.preventDefault();
           toggleFullscreen();
-        } else if (e.key === "Escape" && inOverview) {
-          e.preventDefault();
-          setOverview(false);
         }
       });
 
@@ -1696,7 +2613,7 @@ pub fn build_slideshow_html_with_base_dir(
         if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
       }, { passive: true });
       window.addEventListener("touchend", (e) => {
-        if (touchStartX === null || inOverview) return;
+        if (touchStartX === null || inOverview || tocOpen || helpOpen) return;
         const dx = e.changedTouches[0].clientX - touchStartX;
         touchStartX = null;
         if (Math.abs(dx) > 48) {
@@ -1731,5 +2648,180 @@ pub fn build_slideshow_html_with_base_dir(
         format!("{}{}\n</html>", &with_css[..script_idx], slideshow_hud_and_script)
     } else {
         with_css.replacen("</body>", slideshow_hud_and_script, 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_speaker_notes_single_multiline_and_fences() {
+        let slide = r#"# アルゴリズム入門
+
+本文のテキストです。インラインコード `<!-- note: ignore inline -->` はそのまま残します。
+
+<!-- note: ここで受講者に質問を投げかける -->
+
+```markdown
+<!-- note: コードブロック内のノートは抽出しない -->
+```
+
+<!-- NOTES:
+1. 30秒考える時間を取る
+2. 回答例を2つ紹介する
+-->
+
+<!-- 通常のHTMLコメントは無視する -->
+"#;
+
+        let (cleaned, notes) = extract_speaker_notes(slide);
+
+        assert!(cleaned.contains("# アルゴリズム入門"));
+        assert!(cleaned.contains("`<!-- note: ignore inline -->`"));
+        assert!(cleaned.contains("<!-- note: コードブロック内のノートは抽出しない -->"));
+        assert!(cleaned.contains("<!-- 通常のHTMLコメントは無視する -->"));
+        assert!(!cleaned.contains("ここで受講者に質問を投げかける"));
+        assert!(!cleaned.contains("30秒考える時間を取る"));
+
+        assert_eq!(
+            notes,
+            "ここで受講者に質問を投げかける\n\n1. 30秒考える時間を取る\n2. 回答例を2つ紹介する"
+        );
+    }
+
+    #[test]
+    fn test_slide_mode_attaches_escaped_speaker_notes_without_rendering_on_slide() {
+        let md = r#"---
+title: スピーカーノートテスト
+---
+
+# スライド1
+
+スライド本文です。
+
+<!-- note: 重要ポイント: "A < B & C" を口頭補足 -->
+
+---
+
+# スライド2
+
+ノートなしのスライド。
+"#;
+
+        let compiled = compile_lecture_markdown(md, "slide");
+        assert_eq!(compiled.slide_count, 2);
+        assert!(
+            compiled.html.contains(
+                r#"data-slide-index="0" data-speaker-note="重要ポイント: &quot;A &lt; B &amp; C&quot; を口頭補足""#
+            ),
+            "html={}",
+            compiled.html
+        );
+        // ノート本文がスライドの可視要素として出力されていないこと
+        assert!(!compiled.html.contains("<p>重要ポイント:"));
+        // 2枚目はノートなしのため data-speaker-note 属性を付けない
+        assert!(compiled.html.contains(r#"data-slide-index="1">"#));
+    }
+
+    #[test]
+    fn test_split_slides_respects_code_fences() {
+        let md = r#"# Slide 1
+
+```yaml
+---
+key: value
+---
+```
+
+````markdown
+---
+nested: true
+---
+````
+
+~~~
+---
+~~~
+
+---
+
+# Slide 2
+
+Body 2
+
+---
+
+# Slide 3
+"#;
+
+        let slides = split_slides(md);
+        assert_eq!(slides.len(), 3);
+        assert!(slides[0].contains("# Slide 1"));
+        assert!(slides[0].contains("key: value"));
+        assert!(slides[0].contains("nested: true"));
+        assert!(slides[1].contains("# Slide 2"));
+        assert!(slides[2].contains("# Slide 3"));
+    }
+
+    #[test]
+    fn test_slideshow_html_contains_notes_toc_help_overview_transitions_and_is_offline() {
+        let md = r#"---
+course: ソフトウェア工学
+title: プレゼン最適化テスト
+theme: midnight
+---
+
+# はじめに
+
+- [ ] タスク1
+- [x] タスク2
+
+<!-- notes: 導入は2分以内で話す -->
+
+---
+
+# アーキテクチャ
+
+```mermaid
+flowchart LR
+  A --> B
+```
+"#;
+
+        let html = build_slideshow_html_with_base_dir(md, None, Some("midnight"), None, None);
+
+        // スライドショー基本構造 & テーマ
+        assert!(html.contains("mode-slideshow"));
+        assert!(html.contains("data-lecture-theme=\"midnight\""));
+
+        // スピーカーノート抽出 & ドロワー
+        assert!(html.contains(r#"data-speaker-note="導入は2分以内で話す""#));
+        assert!(html.contains(r#"id="ss-notes-drawer""#));
+        assert!(html.contains(r#"id="ss-notes-toggle""#));
+
+        // オーバービュー（タイトルプレビュー付き）& 目次/スライドジャンプ
+        assert!(html.contains(r#"id="ss-overview""#));
+        assert!(html.contains("slide-thumb-caption"));
+        assert!(html.contains("slide-thumb-title"));
+        assert!(html.contains(r#"id="ss-toc-menu""#));
+        assert!(html.contains(r#"id="ss-toc-list""#));
+
+        // キーボードショートカットヘルプオーバーレイ (?)
+        assert!(html.contains(r#"id="ss-help-overlay""#));
+        assert!(html.contains(r#"id="ss-help-toggle""#));
+
+        // エッジホバーナビゲーション & prefers-reduced-motion 対応トランジション
+        assert!(html.contains(r#"id="ss-edge-prev""#));
+        assert!(html.contains(r#"id="ss-edge-next""#));
+        assert!(html.contains("prefers-reduced-motion: no-preference"));
+        assert!(html.contains("prefers-reduced-motion: reduce"));
+
+        // 100% スタンドアロンオフライン（外部CDNなし・Base64 KaTeXフォント内包）
+        assert!(html.contains("data:font/woff2;base64,"));
+        assert!(!html.contains("https://cdn."));
+        assert!(!html.contains("http://cdn."));
+        assert!(!html.contains("<script src="));
+        assert!(!html.contains(r#"<link rel="stylesheet""#));
     }
 }
