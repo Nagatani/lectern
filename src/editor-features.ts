@@ -22,7 +22,7 @@ export type ReplaceRangeFn = (
 const INDENT = "  ";
 
 function getLineBounds(value: string, start: number, end: number): { blockStart: number; blockEnd: number } {
-  const blockStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const blockStart = start === 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
   // If selection ends right at the start of a new line (after a newline), don't include that extra line
   const effectiveEnd = end > start && value[end - 1] === "\n" ? end - 1 : end;
   const nextNewline = value.indexOf("\n", effectiveEnd);
@@ -107,7 +107,7 @@ export function handleSmartEnter(
   if (start !== end) return false;
 
   const value = editor.value;
-  const lineStart = value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineStart = start === 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
   const beforeCursor = value.slice(lineStart, start);
 
   // 1. Task list: `  - [ ] text` or `  - [x] text`
@@ -233,7 +233,7 @@ export function moveSelectedLines(
   if (direction === -1) {
     if (blockStart === 0) return;
     const prevLineEnd = blockStart - 1;
-    const prevLineStart = value.lastIndexOf("\n", Math.max(0, prevLineEnd - 1)) + 1;
+    const prevLineStart = prevLineEnd === 0 ? 0 : value.lastIndexOf("\n", prevLineEnd - 1) + 1;
     const prevLine = value.slice(prevLineStart, prevLineEnd);
     const swapped = `${block}\n${prevLine}`;
     const delta = -(prevLine.length + 1);
@@ -330,6 +330,23 @@ export interface FindReplaceController {
 interface MatchSpan {
   start: number;
   end: number;
+}
+
+export function expandMatchReplacement(
+  matchedText: string,
+  query: string,
+  replacement: string,
+  useRegex: boolean,
+  caseSensitive: boolean
+): string {
+  if (!useRegex) {
+    return replacement;
+  }
+  try {
+    return matchedText.replace(new RegExp(query, caseSensitive ? "" : "i"), replacement);
+  } catch (_) {
+    return replacement;
+  }
 }
 
 export function setupFindReplaceBar(
@@ -458,7 +475,14 @@ export function setupFindReplaceBar(
     }
 
     const span = matches[targetIdx];
-    const replacement = elReplaceInput.value;
+    const matchedText = editor.value.slice(span.start, span.end);
+    const replacement = expandMatchReplacement(
+      matchedText,
+      elFindInput.value,
+      elReplaceInput.value,
+      useRegex,
+      caseSensitive
+    );
     replaceRange(replacement, span.start, span.end, span.start + replacement.length, span.start + replacement.length);
     computeMatches();
     if (matches.length > 0) {
@@ -477,7 +501,7 @@ export function setupFindReplaceBar(
     let count = 0;
     const replaced = original.replace(regex, (match) => {
       count += 1;
-      return useRegex ? match.replace(new RegExp(query, caseSensitive ? "" : "i"), replacement) : replacement;
+      return expandMatchReplacement(match, query, replacement, useRegex, caseSensitive);
     });
 
     if (count === 0) {

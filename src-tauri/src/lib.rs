@@ -8,8 +8,8 @@ use converter::{
     compile_lecture_markdown, compile_lecture_markdown_with_options, CompileResult,
 };
 use fs_ops::{
-    create_new_markdown, list_markdown_workspace, read_file_utf8, remove_markdown_file,
-    resolve_default_workspace, write_file_utf8, FileEntry,
+    create_directory, create_new_markdown, delete_entry, list_markdown_workspace, read_file_utf8,
+    remove_markdown_file, rename_entry, resolve_default_workspace, write_file_utf8, FileEntry,
 };
 use pdf::render_html_to_pdf;
 use serde::{Deserialize, Serialize};
@@ -170,10 +170,14 @@ fn save_markdown_file(file_path: String, content: String) -> Result<(), String> 
 async fn create_markdown_file(
     workspace_path: String,
     file_name: Option<String>,
+    initial_content: Option<String>,
 ) -> Result<Option<String>, String> {
     // もし file_name が直接渡された場合はその名前で作成、渡されない場合は OS 標準の保存ダイアログを開く
     if let Some(name) = file_name.filter(|s| !s.trim().is_empty()) {
         let created = create_new_markdown(Path::new(&workspace_path), &name)?;
+        if let Some(content) = initial_content {
+            write_file_utf8(&created, &content)?;
+        }
         return Ok(Some(created.to_string_lossy().to_string()));
     }
 
@@ -192,23 +196,44 @@ async fn create_markdown_file(
     };
 
     let target_path = handle.path().to_path_buf();
-    let stem = target_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("新規講義資料");
+    let content_to_write = if let Some(content) = initial_content {
+        content
+    } else {
+        let stem = target_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("新規講義資料");
 
-    let initial_template = format!(
-        "---\ncourse: 講義科目名\ntitle: {}\ndescription: この講義資料の概要や学習目標を簡潔に記述します。\nauthor: 担当教員\ndate: 2026-11-19\ntheme: handout\n---\n\n# {}\n\nここに講義の導入や到達目標を記述します。\n\n> [!NOTE]\n> **ポイント**: 数式 $E = mc^2$ やコードブロック、Mermaid図表を記述できます。\n\n---\n\n# 2. 数式とアルゴリズムの例\n\n$$\n\\sum_{{i=1}}^{{n}} i = \\frac{{n(n+1)}}{{2}}\n$$\n\n```rust\nfn main() {{\n    println!(\"Hello, Lectern!\");\n}}\n```\n",
-        stem, stem
-    );
+        format!(
+            "---\ncourse: 講義科目名\ntitle: {}\ndescription: この講義資料の概要や学習目標を簡潔に記述します。\nauthor: 担当教員\ndate: YYYY-MM-DD\ntheme: handout\n---\n\n# {}\n\nここに講義の導入や到達目標を記述します。\n\n> [!NOTE]\n> **ポイント**: 数式 $E = mc^2$ やコードブロック、Mermaid図表を記述できます。\n\n---\n\n# 2. 数式とアルゴリズムの例\n\n$$\n\\sum_{{i=1}}^{{n}} i = \\frac{{n(n+1)}}{{2}}\n$$\n\n```rust\nfn main() {{\n    println!(\"Hello, Lectern!\");\n}}\n```\n",
+            stem, stem
+        )
+    };
 
-    write_file_utf8(&target_path, &initial_template)?;
+    write_file_utf8(&target_path, &content_to_write)?;
     Ok(Some(target_path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]
 fn delete_markdown_file(file_path: String) -> Result<(), String> {
     remove_markdown_file(Path::new(&file_path))
+}
+
+#[tauri::command]
+fn create_folder(parent_dir: String, name: String) -> Result<String, String> {
+    let created = create_directory(Path::new(&parent_dir), &name)?;
+    Ok(created.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn rename_workspace_entry(old_path: String, new_name: String) -> Result<String, String> {
+    let renamed = rename_entry(Path::new(&old_path), &new_name)?;
+    Ok(renamed.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn delete_workspace_entry(target_path: String) -> Result<(), String> {
+    delete_entry(Path::new(&target_path))
 }
 
 #[tauri::command]
@@ -463,7 +488,12 @@ async fn export_lecture_pdf(
         Some(&resolved_css),
         Some(&default_dir),
     );
-    let bytes = render_html_to_pdf(&full_html, &out_path)?;
+    let out_path_for_pdf = out_path.clone();
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        render_html_to_pdf(&full_html, &out_path_for_pdf)
+    })
+    .await
+    .map_err(|e| format!("PDF変換タスクの実行に失敗しました: {}", e))??;
 
     Ok(Some(ExportResult {
         output_path: out_path.to_string_lossy().to_string(),
@@ -647,8 +677,11 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     // 5. ヘルプ メニュー
     let check_update_help =
         MenuItemBuilder::with_id("app:check-update", "アップデートを確認...").build(app)?;
+    let open_manual =
+        MenuItemBuilder::with_id("help:open-manual", "ユーザーマニュアル...").build(app)?;
     let open_help = MenuItemBuilder::with_id("help:open-guide", "Markdown 記法ガイド").build(app)?;
     let help_submenu = SubmenuBuilder::new(app, "ヘルプ")
+        .item(&open_manual)
         .item(&open_help)
         .separator()
         .item(&check_update_help)
@@ -759,6 +792,9 @@ pub fn run() {
             save_markdown_file,
             create_markdown_file,
             delete_markdown_file,
+            create_folder,
+            rename_workspace_entry,
+            delete_workspace_entry,
             compile_markdown,
             list_themes,
             save_custom_theme,

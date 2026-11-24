@@ -1,6 +1,58 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// RAII ガード: スコープを抜ける際に一時ファイルを必ず削除する
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// ローカルファイルパスを percent-encode 済みの `file://` URL に変換する
+/// (スペース、`#`、`%`、`?`、非 ASCII 文字を含むパスでも Chromium が正しく読み込めるようにする)
+pub fn path_to_file_url(path: &Path) -> String {
+    let raw = path.to_string_lossy().replace('\\', "/");
+    let is_windows_drive =
+        raw.len() >= 2 && raw.as_bytes()[0].is_ascii_alphabetic() && raw.as_bytes()[1] == b':';
+
+    let mut encoded = String::with_capacity(raw.len() + 16);
+    if is_windows_drive {
+        encoded.push_str("file:///");
+    } else if raw.starts_with('/') {
+        encoded.push_str("file://");
+    } else {
+        encoded.push_str("file:///");
+    }
+
+    for (idx, byte) in raw.bytes().enumerate() {
+        let keep = matches!(
+            byte,
+            b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'~'
+                | b'/'
+        ) || (is_windows_drive && idx == 1 && byte == b':');
+
+        if keep {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{:02X}", byte));
+        }
+    }
+
+    encoded
+}
 
 /// システムにインストールされている Chromium 系ブラウザ (macOS / Windows / Linux) の実行ファイルパスを検索する
 pub fn detect_chromium_binary() -> Option<PathBuf> {
@@ -58,20 +110,24 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
             .map_err(|e| format!("出力先ディレクトリの作成に失敗しました: {}", e))?;
     }
 
-    // 一時HTMLファイルを生成
+    // 衝突しないユニークな一時HTMLファイルを生成し、RAIIガードで確実に削除する
     let temp_dir = std::env::temp_dir();
-    let temp_html_path = temp_dir.join(format!("lectern_export_{}.html", std::process::id()));
+    let seq = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let temp_html_path = temp_dir.join(format!(
+        "lectern_export_{}_{}_{}.html",
+        std::process::id(),
+        ts_millis,
+        seq
+    ));
     fs::write(&temp_html_path, html_content)
         .map_err(|e| format!("一時HTMLファイルの書き込みに失敗しました: {}", e))?;
+    let _temp_guard = TempFileGuard(temp_html_path.clone());
 
-    let file_url = if cfg!(target_os = "windows") {
-        format!(
-            "file:///{}",
-            temp_html_path.to_string_lossy().replace('\\', "/")
-        )
-    } else {
-        format!("file://{}", temp_html_path.to_string_lossy())
-    };
+    let file_url = path_to_file_url(&temp_html_path);
 
     let mut cmd = Command::new(&browser_bin);
     cmd.arg("--headless")
@@ -82,7 +138,7 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
         .arg(&file_url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
 
     // Windows でサブプロセス起動時に黒いコンソール画面 (cmd.exe) が一瞬出るのを防止
     #[cfg(target_os = "windows")]
@@ -92,16 +148,23 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let status = cmd
-        .status()
+    let output = cmd
+        .output()
         .map_err(|e| format!("ブラウザ印刷エンジンの起動に失敗しました: {}", e))?;
 
-    let _ = fs::remove_file(&temp_html_path);
-
-    if !status.success() {
+    if !output.status.success() {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        let stderr_trimmed = stderr_str.trim();
+        let detail = if stderr_trimmed.is_empty() {
+            String::new()
+        } else {
+            let truncated: String = stderr_trimmed.chars().take(500).collect();
+            format!(" — {}", truncated)
+        };
         return Err(format!(
-            "PDF生成プロセスがエラーコードで終了しました: {:?}",
-            status.code()
+            "PDF生成プロセスがエラーコードで終了しました: {:?}{}",
+            output.status.code(),
+            detail
         ));
     }
 
@@ -109,4 +172,43 @@ pub fn render_html_to_pdf(html_content: &str, output_pdf_path: &Path) -> Result<
         .map_err(|e| format!("生成されたPDFファイルの情報取得に失敗しました: {}", e))?;
 
     Ok(meta.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_to_file_url_encodes_spaces_hash_percent_and_utf8() {
+        let unix_path = Path::new("/tmp/my folder/講義#1 100%?test.html");
+        let url = path_to_file_url(unix_path);
+        assert_eq!(
+            url,
+            "file:///tmp/my%20folder/%E8%AC%9B%E7%BE%A9%231%20100%25%3Ftest.html"
+        );
+    }
+
+    #[test]
+    fn test_path_to_file_url_handles_windows_drive_path() {
+        let win_path = Path::new(r"C:\Users\First Last\AppData\Local\Temp\lectern #1.html");
+        let url = path_to_file_url(win_path);
+        assert_eq!(
+            url,
+            "file:///C:/Users/First%20Last/AppData/Local/Temp/lectern%20%231.html"
+        );
+    }
+
+    #[test]
+    fn test_temp_file_guard_cleans_up_on_drop() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "lectern_guard_test_{}.html",
+            std::process::id()
+        ));
+        fs::write(&temp_path, "<html></html>").expect("write temp file");
+        assert!(temp_path.exists());
+        {
+            let _guard = TempFileGuard(temp_path.clone());
+        }
+        assert!(!temp_path.exists());
+    }
 }

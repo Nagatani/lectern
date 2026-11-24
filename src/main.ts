@@ -20,19 +20,16 @@ import {
   setupFindReplaceBar,
   wrapSelectionWithPair,
 } from "./editor-features";
+import {
+  createFileExplorer,
+  type ExplorerFileEntry,
+  type FileExplorerController,
+} from "./file-explorer";
+import { openUserManualModal } from "./user-manual";
 
 // ============================================================================
 // Types matching Rust Backend structs
 // ============================================================================
-
-interface FileEntry {
-  name: string;
-  path: string;
-  rel_path: string;
-  is_dir: boolean;
-  can_open: boolean;
-  extension: string | null;
-}
 
 interface DroppedPathInfo {
   is_dir: boolean;
@@ -165,6 +162,7 @@ const btnUpdaterInstall = document.getElementById("btn-updater-install") as HTML
 const btnUpdaterClose = document.getElementById("btn-updater-close") as HTMLButtonElement;
 
 let findReplaceController: FindReplaceController | null = null;
+let fileExplorer: FileExplorerController | null = null;
 let pendingUpdate: Update | null = null;
 
 // ============================================================================
@@ -314,20 +312,27 @@ function applyLectureThemeToPreview(themeId: string): void {
 
 /**
  * Markdown先頭のフロントマター (`--- ... ---`) 内の `theme: xxx` を更新・追加する
+ * (CRLF 改行およびファイル末尾の `---` にも対応)
  */
 function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boolean): void {
   const raw = elEditor.value;
-  if (!raw.startsWith("---\n")) {
+  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+  const startMatch = /^---\r?\n/.exec(raw);
+  if (!startMatch) {
     if (!insertIfMissing) return;
-    replaceEditorRangeWithUndo(`---\ntheme: ${newThemeId}\n---\n\n`, 0, 0);
+    replaceEditorRangeWithUndo(`---${eol}theme: ${newThemeId}${eol}---${eol}${eol}`, 0, 0);
     return;
   }
 
-  const endIdx = raw.indexOf("\n---\n", 4);
-  if (endIdx === -1) return;
+  const yamlStart = startMatch[0].length;
+  const rest = raw.slice(yamlStart);
+  const endMatch = /(?:^|\r?\n)---(?:\r?\n|$)/.exec(rest);
+  if (!endMatch) return;
 
-  const yamlPart = raw.substring(4, endIdx);
-  const lines = yamlPart.split("\n");
+  const yamlEnd = yamlStart + endMatch.index;
+  const frontmatterEnd = yamlStart + endMatch.index + endMatch[0].length;
+  const yamlPart = raw.slice(yamlStart, yamlEnd);
+  const lines = yamlPart.length > 0 ? yamlPart.split(/\r?\n/) : [];
 
   let foundThemeLine = false;
   const updatedLines = lines.map((line) => {
@@ -343,10 +348,11 @@ function updateMarkdownFrontmatterTheme(newThemeId: string, insertIfMissing: boo
     updatedLines.push(`theme: ${newThemeId}`);
   }
 
-  const nextFrontmatter = `---\n${updatedLines.join("\n")}\n---\n`;
-  const currentFrontmatter = raw.substring(0, endIdx + 5);
+  const hadTrailingNewline = /\r?\n$/.test(endMatch[0]);
+  const nextFrontmatter = `---${eol}${updatedLines.join(eol)}${eol}---${hadTrailingNewline ? eol : ""}`;
+  const currentFrontmatter = raw.slice(0, frontmatterEnd);
   if (nextFrontmatter !== currentFrontmatter) {
-    replaceEditorRangeWithUndo(nextFrontmatter, 0, endIdx + 5);
+    replaceEditorRangeWithUndo(nextFrontmatter, 0, frontmatterEnd);
   }
 }
 
@@ -449,7 +455,10 @@ function getOrCreateMermaidSandbox(): HTMLDivElement {
   return sb;
 }
 
-async function renderMathAndDiagrams(container: HTMLElement): Promise<void> {
+async function renderMathAndDiagrams(
+  container: HTMLElement,
+  isStale?: () => boolean
+): Promise<void> {
   // 1. Render Inline Math
   const inlineMaths = container.querySelectorAll<HTMLElement>(".math-inline");
   inlineMaths.forEach((el) => {
@@ -477,17 +486,22 @@ async function renderMathAndDiagrams(container: HTMLElement): Promise<void> {
   if (mermaidBlocks.length > 0) {
     const sandbox = getOrCreateMermaidSandbox();
     for (const block of mermaidBlocks) {
+      if (isStale?.()) return;
       const code = block.getAttribute("data-mermaid");
       if (!code) continue;
       try {
         mermaidCounter += 1;
         const id = `mermaid-svg-${Date.now()}-${mermaidCounter}`;
         const { svg } = await mermaid.render(id, code, sandbox);
+        if (isStale?.()) return;
         block.innerHTML = svg;
       } catch (err) {
+        if (isStale?.()) return;
         block.innerHTML = `<pre style="color:#ef4444;font-size:12px;">Mermaid Syntax Error:\n${escapeHtml(
           String(err)
         )}</pre>`;
+      } finally {
+        sandbox.innerHTML = "";
       }
     }
   }
@@ -596,14 +610,29 @@ function setStatus(msg: string): void {
 }
 
 let compileTimer: number | null = null;
+let compileGeneration = 0;
+let activeCompilePromise: Promise<void> | null = null;
 
 function scheduleCompile(): void {
   if (compileTimer !== null) {
     window.clearTimeout(compileTimer);
   }
   compileTimer = window.setTimeout(() => {
+    compileTimer = null;
     void compileCurrentMarkdown();
   }, 120);
+}
+
+async function flushPendingCompile(): Promise<void> {
+  if (compileTimer !== null) {
+    window.clearTimeout(compileTimer);
+    compileTimer = null;
+    await compileCurrentMarkdown(false);
+    return;
+  }
+  if (activeCompilePromise) {
+    await activeCompilePromise;
+  }
 }
 
 function getCurrentBaseDir(): string | null {
@@ -618,39 +647,56 @@ function getCurrentBaseDir(): string | null {
 }
 
 async function compileCurrentMarkdown(syncThemeFromFrontmatter = true): Promise<void> {
+  const gen = ++compileGeneration;
   const markdown = elEditor.value;
-  try {
-    const res = await invoke<CompileResult>("compile_markdown", {
-      markdown,
-      mode: state.mode,
-      themeId: syncThemeFromFrontmatter ? null : state.currentThemeId,
-      baseDir: getCurrentBaseDir(),
-    });
-    state.lastCompileResult = res;
-    state.totalSlides = Math.max(1, res.slide_count);
-    if (state.currentSlideIndex >= state.totalSlides) {
-      state.currentSlideIndex = state.totalSlides - 1;
-    }
+  const task = (async () => {
+    try {
+      const res = await invoke<CompileResult>("compile_markdown", {
+        markdown,
+        mode: state.mode,
+        themeId: syncThemeFromFrontmatter ? null : state.currentThemeId,
+        baseDir: getCurrentBaseDir(),
+      });
+      if (gen !== compileGeneration) return;
 
-    // フロントマターに `theme: xxx` が記述されていれば自動連動
-    if (syncThemeFromFrontmatter && res.theme) {
-      const cleanFrontTheme = res.theme.trim().replace(/\.css$/i, "");
-      const matched = state.themes.find(
-        (t) => t.id.toLowerCase() === cleanFrontTheme.toLowerCase()
-      );
-      if (matched && matched.id !== state.currentThemeId) {
-        applyLectureThemeToPreview(matched.id);
+      state.lastCompileResult = res;
+      state.totalSlides = Math.max(1, res.slide_count);
+      if (state.currentSlideIndex >= state.totalSlides) {
+        state.currentSlideIndex = state.totalSlides - 1;
       }
+
+      // フロントマターに `theme: xxx` が記述されていれば自動連動
+      if (syncThemeFromFrontmatter && res.theme) {
+        const cleanFrontTheme = res.theme.trim().replace(/\.css$/i, "");
+        const matched = state.themes.find(
+          (t) => t.id.toLowerCase() === cleanFrontTheme.toLowerCase()
+        );
+        if (matched && matched.id !== state.currentThemeId) {
+          applyLectureThemeToPreview(matched.id);
+        }
+      }
+
+      elPreviewContent.innerHTML = res.html;
+      elCompileTime.textContent = `レンダリング: ${res.elapsed_ms} ms`;
+
+      await renderMathAndDiagrams(elPreviewContent, () => gen !== compileGeneration);
+      if (gen !== compileGeneration) return;
+
+      updateSlideVisibility();
+    } catch (err) {
+      if (gen !== compileGeneration) return;
+      console.error("Compile error:", err);
+      setStatus(`変換エラー: ${String(err)}`);
     }
+  })();
 
-    elPreviewContent.innerHTML = res.html;
-    elCompileTime.textContent = `レンダリング: ${res.elapsed_ms} ms`;
-
-    await renderMathAndDiagrams(elPreviewContent);
-    updateSlideVisibility();
-  } catch (err) {
-    console.error("Compile error:", err);
-    setStatus(`変換エラー: ${String(err)}`);
+  activeCompilePromise = task;
+  try {
+    await task;
+  } finally {
+    if (activeCompilePromise === task) {
+      activeCompilePromise = null;
+    }
   }
 }
 
@@ -692,44 +738,113 @@ function setRenderMode(mode: RenderMode): void {
 }
 
 // ============================================================================
-// Workspace & File Browser Operations (Tree View + Openable / Non-Openable)
+// Workspace & File Browser Operations (VSCode-style File Explorer)
 // ============================================================================
 
-const expandedDirs = new Set<string>();
-const dirChildrenCache = new Map<string, FileEntry[]>();
-
-function getFileIcon(entry: FileEntry): string {
-  if (entry.can_open) return "📝";
-  const ext = (entry.extension || "").toLowerCase();
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"].includes(ext)) {
-    return "🖼️";
-  }
-  if (ext === "pdf") return "📑";
-  if (ext === "html" || ext === "htm") return "🌐";
-  if (ext === "css" || ext === "scss") return "🎨";
-  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "📦";
-  if (["mp4", "mov", "webm", "avi", "mp3", "wav", "m4a"].includes(ext)) return "🎬";
-  if (["json", "yaml", "yml", "toml", "xml", "csv"].includes(ext)) return "🧾";
-  return "📄";
+function normalizePathForCompare(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-function getFileBadgeText(entry: FileEntry): string {
-  if (entry.can_open) return "MD";
-  if (entry.extension) {
-    return entry.extension.toUpperCase().slice(0, 6);
-  }
-  return "非対応";
+function basenameFromPath(p: string): string {
+  const norm = normalizePathForCompare(p);
+  const idx = norm.lastIndexOf("/");
+  return idx >= 0 ? norm.slice(idx + 1) : norm;
 }
 
-async function fetchDirectoryEntries(dirPath: string, forceReload = false): Promise<FileEntry[]> {
-  if (!forceReload && dirChildrenCache.has(dirPath)) {
-    return dirChildrenCache.get(dirPath)!;
-  }
-  const entries = await invoke<FileEntry[]>("list_workspace_files", {
-    workspacePath: dirPath,
+function clearCurrentOpenFile(): void {
+  state.currentFilePath = "";
+  state.currentFileName = "";
+  elEditor.value = "";
+  elCurrentFileIndicator.textContent = "未選択";
+  markDirty(false);
+  updateLineNumbersAndStats();
+  elPreviewContent.innerHTML = "";
+  state.lastCompileResult = null;
+  state.totalSlides = 1;
+  state.currentSlideIndex = 0;
+  updateSlideVisibility();
+}
+
+function setupFileExplorer(): FileExplorerController {
+  return createFileExplorer({
+    treeEl: elFileTree,
+    getWorkspacePath: () => state.workspacePath,
+    getActiveFilePath: () => state.currentFilePath,
+    listDirectory: (dirPath) =>
+      invoke<ExplorerFileEntry[]>("list_workspace_files", {
+        workspacePath: dirPath,
+      }),
+    onOpenFile: async (filePath, fileName) => {
+      if (state.isDirty && state.currentFilePath) {
+        await saveCurrentFile();
+      }
+      await openFile(filePath, fileName);
+    },
+    onOpenWorkspace: async (dirPath) => {
+      if (state.isDirty && state.currentFilePath) {
+        await saveCurrentFile();
+      }
+      await loadWorkspace(dirPath);
+    },
+    onNavigateParent: async () => {
+      await navigateToParentDirectory();
+    },
+    onCreateFile: async (parentDir, fileName) => {
+      return await invoke<string | null>("create_markdown_file", {
+        workspacePath: parentDir,
+        fileName,
+        initialContent: null,
+      });
+    },
+    onCreateFolder: async (parentDir, folderName) => {
+      return await invoke<string>("create_folder", {
+        parentDir,
+        name: folderName,
+      });
+    },
+    onRenameEntry: async (oldPath, newName) => {
+      return await invoke<string>("rename_workspace_entry", {
+        oldPath,
+        newName,
+      });
+    },
+    onDeleteEntry: async (targetPath, displayName, isDir) => {
+      const kindLabel = isDir ? "フォルダ（中身も含む）" : "ファイル";
+      const confirmName = await promptModal(
+        `${kindLabel}の削除確認`,
+        `「${displayName}」を削除しますか？ 決定を押すと削除されます。`,
+        displayName
+      );
+      if (!confirmName) return false;
+      await invoke("delete_workspace_entry", { targetPath });
+      return true;
+    },
+    onRevealInExplorer: async (targetPath) => {
+      await revealInExplorer(targetPath);
+    },
+    onStatus: (msg) => setStatus(msg),
+    onEntryRenamed: (oldPath, newPath, isDir) => {
+      if (!state.currentFilePath) return;
+      const curNorm = normalizePathForCompare(state.currentFilePath);
+      const oldNorm = normalizePathForCompare(oldPath);
+      if (curNorm === oldNorm) {
+        state.currentFilePath = newPath;
+        state.currentFileName = basenameFromPath(newPath);
+        elCurrentFileIndicator.textContent = state.currentFileName;
+      } else if (isDir && curNorm.startsWith(oldNorm + "/")) {
+        const suffix = state.currentFilePath.slice(oldPath.length);
+        state.currentFilePath = newPath + suffix;
+      }
+    },
+    onEntryDeleted: (deletedPath, isDir) => {
+      if (!state.currentFilePath) return;
+      const curNorm = normalizePathForCompare(state.currentFilePath);
+      const delNorm = normalizePathForCompare(deletedPath);
+      if (curNorm === delNorm || (isDir && curNorm.startsWith(delNorm + "/"))) {
+        clearCurrentOpenFile();
+      }
+    },
   });
-  dirChildrenCache.set(dirPath, entries);
-  return entries;
 }
 
 async function loadWorkspace(
@@ -738,12 +853,13 @@ async function loadWorkspace(
 ): Promise<boolean> {
   try {
     const isSameWorkspace = state.workspacePath === workspacePath;
-    dirChildrenCache.clear();
-    if (!isSameWorkspace) {
-      expandedDirs.clear();
+    if (!fileExplorer) {
+      fileExplorer = setupFileExplorer();
     }
 
-    const entries = await fetchDirectoryEntries(workspacePath, true);
+    const entries = await fileExplorer.loadRoot(workspacePath, {
+      preserveExpanded: isSameWorkspace,
+    });
     state.workspacePath = workspacePath;
     elWorkspacePathLabel.textContent = workspacePath;
     elWorkspacePathLabel.title = `${workspacePath} (クリックでFinder / エクスプローラー表示)`;
@@ -751,7 +867,6 @@ async function loadWorkspace(
     recordRecentWorkspace(workspacePath);
 
     await loadThemes();
-    renderFileTree(entries);
 
     const openableCount = entries.filter((e) => !e.is_dir && e.can_open).length;
     setStatus(
@@ -762,6 +877,8 @@ async function loadWorkspace(
     const firstMd = entries.find((e) => !e.is_dir && e.can_open);
     if (firstMd && !state.currentFilePath) {
       await openFile(firstMd.path, firstMd.name);
+    } else if (state.currentFilePath) {
+      await fileExplorer.setActiveFile(state.currentFilePath, { reveal: false });
     }
     return true;
   } catch (err) {
@@ -798,277 +915,6 @@ async function revealInExplorer(targetPath: string): Promise<void> {
   }
 }
 
-function updateActiveFileHighlight(): void {
-  const items = elFileTree.querySelectorAll<HTMLLIElement>(".file-tree-item.openable");
-  items.forEach((li) => {
-    const isActive = li.dataset.filePath === state.currentFilePath;
-    li.classList.toggle("active", isActive);
-    const btn = li.querySelector<HTMLButtonElement>(".file-item-main");
-    if (btn) {
-      if (isActive) {
-        btn.setAttribute("aria-current", "true");
-      } else {
-        btn.removeAttribute("aria-current");
-      }
-    }
-  });
-}
-
-function renderEntriesIntoList(
-  container: HTMLUListElement,
-  entries: FileEntry[],
-  depth: number
-): void {
-  container.innerHTML = "";
-
-  if (entries.length === 0) {
-    const emptyLi = document.createElement("li");
-    emptyLi.className = "file-tree-empty";
-    emptyLi.style.setProperty("--tree-depth", String(depth));
-    emptyLi.textContent = "(空のフォルダ)";
-    container.appendChild(emptyLi);
-    return;
-  }
-
-  for (const entry of entries) {
-    if (entry.is_dir) {
-      const li = document.createElement("li");
-      li.className = "file-tree-dir-node";
-      li.setAttribute("role", "treeitem");
-      li.style.setProperty("--tree-depth", String(depth));
-
-      const details = document.createElement("details");
-      details.className = "tree-folder";
-      const isInitiallyOpen = expandedDirs.has(entry.path);
-      if (isInitiallyOpen) {
-        details.open = true;
-      }
-
-      const summary = document.createElement("summary");
-      summary.className = "tree-folder-summary";
-      summary.title = `クリックで展開/折りたたみ · ダブルクリックで「${entry.name}」をルート表示`;
-
-      const iconSpan = document.createElement("span");
-      iconSpan.className = "tree-folder-icon";
-      iconSpan.setAttribute("aria-hidden", "true");
-      iconSpan.textContent = isInitiallyOpen ? "📂" : "📁";
-
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "file-item-name";
-      nameSpan.textContent = entry.name;
-
-      summary.appendChild(iconSpan);
-      summary.appendChild(nameSpan);
-
-      const childrenUl = document.createElement("ul");
-      childrenUl.className = "file-tree-children";
-      childrenUl.setAttribute("role", "group");
-
-      let childrenLoaded = false;
-      const loadAndRenderChildren = async () => {
-        if (childrenLoaded) return;
-        childrenLoaded = true;
-        childrenUl.innerHTML = "";
-        const loadingLi = document.createElement("li");
-        loadingLi.className = "file-tree-empty";
-        loadingLi.style.setProperty("--tree-depth", String(depth + 1));
-        loadingLi.textContent = "読み込み中...";
-        childrenUl.appendChild(loadingLi);
-
-        try {
-          const childEntries = await fetchDirectoryEntries(entry.path);
-          renderEntriesIntoList(childrenUl, childEntries, depth + 1);
-        } catch (err) {
-          childrenLoaded = false;
-          childrenUl.innerHTML = "";
-          const errLi = document.createElement("li");
-          errLi.className = "file-tree-empty";
-          errLi.style.setProperty("--tree-depth", String(depth + 1));
-          errLi.textContent = "読み込み失敗";
-          childrenUl.appendChild(errLi);
-          setStatus(`サブフォルダ読み込みエラー: ${String(err)}`);
-        }
-      };
-
-      details.addEventListener("toggle", () => {
-        if (details.open) {
-          expandedDirs.add(entry.path);
-          iconSpan.textContent = "📂";
-          void loadAndRenderChildren();
-        } else {
-          expandedDirs.delete(entry.path);
-          iconSpan.textContent = "📁";
-        }
-      });
-
-      summary.addEventListener("dblclick", async (ev) => {
-        ev.preventDefault();
-        if (state.isDirty && state.currentFilePath) {
-          await saveCurrentFile();
-        }
-        await loadWorkspace(entry.path);
-      });
-
-      details.appendChild(summary);
-      details.appendChild(childrenUl);
-
-      // Sibling action button (kept outside <summary> for accessible semantics)
-      const btnFocusDir = document.createElement("button");
-      btnFocusDir.type = "button";
-      btnFocusDir.className = "tree-dir-focus-btn";
-      btnFocusDir.title = `「${entry.name}」をルートフォルダとして開く`;
-      btnFocusDir.setAttribute("aria-label", `${entry.name} をルートフォルダとして開く`);
-      btnFocusDir.textContent = "↪";
-      btnFocusDir.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        if (state.isDirty && state.currentFilePath) {
-          await saveCurrentFile();
-        }
-        await loadWorkspace(entry.path);
-      });
-
-      li.appendChild(details);
-      li.appendChild(btnFocusDir);
-      container.appendChild(li);
-
-      if (isInitiallyOpen) {
-        void loadAndRenderChildren();
-      }
-      continue;
-    }
-
-    const li = document.createElement("li");
-    li.dataset.filePath = entry.path;
-    li.setAttribute("role", "treeitem");
-    li.style.setProperty("--tree-depth", String(depth));
-
-    if (entry.can_open) {
-      li.className = "file-tree-item openable";
-      const isActive = entry.path === state.currentFilePath;
-      if (isActive) {
-        li.classList.add("active");
-      }
-
-      const mainBtn = document.createElement("button");
-      mainBtn.type = "button";
-      mainBtn.className = "file-item-main";
-      mainBtn.title = `${entry.name} をエディタで開く`;
-      if (isActive) {
-        mainBtn.setAttribute("aria-current", "true");
-      }
-
-      const iconSpan = document.createElement("span");
-      iconSpan.className = "file-item-icon";
-      iconSpan.setAttribute("aria-hidden", "true");
-      iconSpan.textContent = getFileIcon(entry);
-
-      const spanName = document.createElement("span");
-      spanName.className = "file-item-name";
-      spanName.textContent = entry.name;
-
-      const badge = document.createElement("span");
-      badge.className = "file-ext-badge ext-openable";
-      badge.textContent = getFileBadgeText(entry);
-
-      mainBtn.appendChild(iconSpan);
-      mainBtn.appendChild(spanName);
-      mainBtn.appendChild(badge);
-      mainBtn.addEventListener("click", async () => {
-        if (state.isDirty && state.currentFilePath) {
-          await saveCurrentFile();
-        }
-        await openFile(entry.path, entry.name);
-      });
-
-      const btnDel = document.createElement("button");
-      btnDel.type = "button";
-      btnDel.className = "file-delete-btn";
-      btnDel.title = "ファイルを削除";
-      btnDel.setAttribute("aria-label", `${entry.name} を削除`);
-      btnDel.textContent = "🗑";
-      btnDel.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        await deleteFile(entry.path, entry.name);
-      });
-
-      li.appendChild(mainBtn);
-      li.appendChild(btnDel);
-    } else {
-      li.className = "file-tree-item unopenable";
-      li.setAttribute("aria-disabled", "true");
-
-      const mainDiv = document.createElement("div");
-      mainDiv.className = "file-item-main file-item-readonly";
-      const extLabel = entry.extension ? `.${entry.extension}` : "拡張子なし";
-      mainDiv.title = `${entry.name} (${extLabel} はエディタで開けません · 右の ↗ でFinder/エクスプローラー表示)`;
-
-      const iconSpan = document.createElement("span");
-      iconSpan.className = "file-item-icon";
-      iconSpan.setAttribute("aria-hidden", "true");
-      iconSpan.textContent = getFileIcon(entry);
-
-      const spanName = document.createElement("span");
-      spanName.className = "file-item-name";
-      spanName.textContent = entry.name;
-
-      const badge = document.createElement("span");
-      badge.className = "file-ext-badge ext-unopenable";
-      badge.textContent = getFileBadgeText(entry);
-
-      mainDiv.appendChild(iconSpan);
-      mainDiv.appendChild(spanName);
-      mainDiv.appendChild(badge);
-      mainDiv.addEventListener("click", () => {
-        setStatus(
-          `「${entry.name}」(${extLabel}) はMarkdownエディタでは開けません（右の ↗ でFinder / エクスプローラー表示できます）`
-        );
-      });
-
-      const btnReveal = document.createElement("button");
-      btnReveal.type = "button";
-      btnReveal.className = "file-reveal-btn";
-      btnReveal.title = "Finder / エクスプローラーで表示";
-      btnReveal.setAttribute("aria-label", `${entry.name} をFinder/エクスプローラーで表示`);
-      btnReveal.textContent = "↗";
-      btnReveal.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        void revealInExplorer(entry.path);
-      });
-
-      li.appendChild(mainDiv);
-      li.appendChild(btnReveal);
-    }
-
-    container.appendChild(li);
-  }
-}
-
-function renderFileTree(entries: FileEntry[]): void {
-  elFileTree.innerHTML = "";
-
-  // 親ディレクトリへ移動する ".." エントリを先頭に配置
-  const parentLi = document.createElement("li");
-  parentLi.className = "file-tree-parent-item";
-  parentLi.setAttribute("role", "treeitem");
-
-  const parentBtn = document.createElement("button");
-  parentBtn.type = "button";
-  parentBtn.className = "file-tree-parent-btn";
-  parentBtn.title = "親フォルダへ移動";
-  parentBtn.textContent = "📁 .. (上の階層へ)";
-  parentBtn.addEventListener("click", () => {
-    void navigateToParentDirectory();
-  });
-  parentLi.appendChild(parentBtn);
-  elFileTree.appendChild(parentLi);
-
-  const fragmentList = document.createElement("ul");
-  renderEntriesIntoList(fragmentList, entries, 0);
-  while (fragmentList.firstChild) {
-    elFileTree.appendChild(fragmentList.firstChild);
-  }
-}
-
 async function openFile(filePath: string, displayName: string): Promise<void> {
   try {
     const content = await invoke<string>("read_markdown_file", {
@@ -1084,7 +930,7 @@ async function openFile(filePath: string, displayName: string): Promise<void> {
     updateLineNumbersAndStats();
 
     // Update active state in tree in-place (preserving expanded folders & scroll)
-    updateActiveFileHighlight();
+    void fileExplorer?.setActiveFile(filePath, { reveal: true });
 
     await compileCurrentMarkdown();
     setStatus(`ファイルを開きました: ${displayName}`);
@@ -1095,7 +941,7 @@ async function openFile(filePath: string, displayName: string): Promise<void> {
 
 async function saveCurrentFile(): Promise<void> {
   if (!state.currentFilePath) {
-    await createNewFileFlow();
+    await createNewFileFlow(elEditor.value);
     return;
   }
   try {
@@ -1110,14 +956,19 @@ async function saveCurrentFile(): Promise<void> {
   }
 }
 
-async function createNewFileFlow(): Promise<void> {
+async function createNewFileFlow(initialContent: string | null = null): Promise<void> {
   try {
     const createdPath = await invoke<string | null>("create_markdown_file", {
       workspacePath: state.workspacePath,
       fileName: null,
+      initialContent,
     });
     if (!createdPath) {
-      setStatus("新規ファイルの作成をキャンセルしました");
+      setStatus(
+        initialContent !== null
+          ? "名前を付けて保存をキャンセルしました"
+          : "新規ファイルの作成をキャンセルしました"
+      );
       return;
     }
     const info = await invoke<DroppedPathInfo>("inspect_dropped_path", {
@@ -1126,32 +977,13 @@ async function createNewFileFlow(): Promise<void> {
     await loadWorkspace(info.workspace_path);
     const displayName = info.file_name || createdPath;
     await openFile(createdPath, displayName);
-    setStatus(`新規ファイルを作成しました: ${displayName}`);
+    setStatus(
+      initialContent !== null
+        ? `保存しました: ${displayName}`
+        : `新規ファイルを作成しました: ${displayName}`
+    );
   } catch (err) {
     setStatus(`作成エラー: ${String(err)}`);
-  }
-}
-
-async function deleteFile(filePath: string, relPath: string): Promise<void> {
-  const confirmName = await promptModal(
-    "ファイルの削除確認",
-    `「${relPath}」を削除しますか？ 決定を押すと削除されます。`,
-    relPath
-  );
-  if (!confirmName) return;
-
-  try {
-    await invoke("delete_markdown_file", { filePath });
-    if (state.currentFilePath === filePath) {
-      state.currentFilePath = "";
-      state.currentFileName = "";
-      elEditor.value = "";
-      elCurrentFileIndicator.textContent = "未選択";
-    }
-    await loadWorkspace(state.workspacePath);
-    setStatus(`削除しました: ${relPath}`);
-  } catch (err) {
-    setStatus(`削除エラー: ${String(err)}`);
   }
 }
 
@@ -1170,6 +1002,7 @@ async function exportHtmlFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
+  await flushPendingCompile();
   setStatus(`HTMLファイルの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
@@ -1214,6 +1047,7 @@ async function exportSlideshowHtmlFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
+  await flushPendingCompile();
   setStatus(`スライドショーHTMLの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = await getRenderedSlideBodyHtml();
@@ -1240,6 +1074,7 @@ async function exportPdfFlow(): Promise<void> {
   if (state.isDirty && state.currentFilePath) {
     await saveCurrentFile();
   }
+  await flushPendingCompile();
   setStatus(`PDFファイルの保存先を選択してください (テーマ: ${state.currentThemeId})...`);
   try {
     const renderedBodyHtml = getFullyRenderedPreviewHtml();
@@ -1496,7 +1331,13 @@ function bindEvents(): void {
   elWorkspacePathLabel.addEventListener("click", () =>
     void revealInExplorer(state.workspacePath)
   );
-  btnRefreshTree.addEventListener("click", () => void loadWorkspace(state.workspacePath));
+  btnRefreshTree.addEventListener("click", () => {
+    if (fileExplorer) {
+      void fileExplorer.refresh();
+    } else {
+      void loadWorkspace(state.workspacePath);
+    }
+  });
 
   // Reveal exported file in Finder / Explorer from export modal
   btnRevealExported.addEventListener("click", () => {
@@ -2003,6 +1844,9 @@ async function setupNativeMenuListener(): Promise<void> {
         case "view:open-logs":
           openActivityLogsModal();
           break;
+        case "help:open-manual":
+          openUserManualModal();
+          break;
         case "help:open-guide":
           modalHelp.returnValue = "";
           modalHelp.showModal();
@@ -2194,6 +2038,7 @@ async function installPendingUpdate(): Promise<void> {
 
 async function initApp(): Promise<void> {
   bindEvents();
+  fileExplorer = setupFileExplorer();
   btnUpdaterInstall.addEventListener("click", () => void installPendingUpdate());
   findReplaceController = setupFindReplaceBar(
     elEditor,
