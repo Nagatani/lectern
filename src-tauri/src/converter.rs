@@ -1807,9 +1807,11 @@ pub fn build_standalone_html_with_base_dir(
     code:not(pre code) {{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       background: #eef2f9;
-      padding: 0.15em 0.4em;
+      padding: 0.1em 0.4em;
       border-radius: 4px;
-      font-size: 0.9em;
+      font-size: 0.95em;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
     }}
     .code-block-wrapper {{
       margin: 14px 0;

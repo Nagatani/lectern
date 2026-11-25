@@ -43,7 +43,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 .lecture-render-root[data-lecture-theme="handout"],
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide {
-  font-size: 1.0625rem;
+  font-size: 1.125rem;
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "ヒラギノ角ゴ ProN W3", "Hiragino Kaku Gothic ProN",
     Arial, "メイリオ", Meiryo, sans-serif;
   color: #222222 !important;
@@ -52,7 +52,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 /* スライドモード時は16:9枠内に綺麗に収まるようサイズと背景を最適化 */
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide {
-  font-size: 0.95rem;
+  font-size: 1rem;
   background-color: #ffffff !important;
   border-color: #dcdcdc !important;
 }
@@ -127,7 +127,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 .lecture-render-root[data-lecture-theme="handout"] .course-badge {
   display: inline-block;
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "Hiragino Kaku Gothic ProN", sans-serif !important;
-  font-size: 0.88rem !important;
+  font-size: 0.9rem !important;
   font-weight: 600 !important;
   letter-spacing: 0.08em;
   color: #3f4756 !important;
@@ -141,7 +141,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "ヒラギノ角ゴ ProN W3", "Hiragino Kaku Gothic ProN",
     Arial, "メイリオ", Meiryo, sans-serif !important;
   font-weight: normal !important;
-  font-size: 2.05rem !important;
+  font-size: 2.25rem !important;
   line-height: 1.45;
   color: #222222 !important;
   letter-spacing: 0.06em;
@@ -152,7 +152,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-subtitle {
   font-weight: normal;
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   line-height: 1.5;
   letter-spacing: 0.04em;
   color: #333333 !important;
@@ -169,7 +169,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-author {
-  font-size: 1.15rem;
+  font-size: 1.2rem;
   font-weight: normal;
   letter-spacing: 0.04em;
   color: #222222 !important;
@@ -178,7 +178,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .lecture-doc-date {
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: normal;
   letter-spacing: 0.04em;
   color: #444444 !important;
@@ -197,7 +197,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 .lecture-render-root[data-lecture-theme="handout"] .description-label {
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "Hiragino Kaku Gothic ProN", sans-serif !important;
-  font-size: 0.8rem !important;
+  font-size: 0.9rem !important;
   font-weight: 700 !important;
   letter-spacing: 0.06em;
   color: #555555 !important;
@@ -206,7 +206,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 .lecture-render-root[data-lecture-theme="handout"] .description-text {
   font-family: "游明朝", YuMincho, "ヒラギノ明朝 ProN W3", "Hiragino Mincho ProN", serif !important;
-  font-size: 0.98rem !important;
+  font-size: 1.05rem !important;
   line-height: 1.9 !important;
   letter-spacing: 0.04em;
   color: #222222 !important;
@@ -230,38 +230,38 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h1 {
-  font-size: 1.85rem !important;
+  font-size: 2rem !important;
   margin: 2.6rem auto 1.4rem !important;
   text-align: center;
   border-bottom: none !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h2 {
-  font-size: 1.5rem !important;
+  font-size: 1.6rem !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.22) !important;
   margin: 2.6rem 0 1.15rem !important;
   padding-bottom: 0.35rem;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h3 {
-  font-size: 1.28rem !important;
+  font-size: 1.35rem !important;
   border-bottom: 1px solid rgba(0, 0, 0, 0.16) !important;
   margin: 2rem 0 0.9rem !important;
   padding-bottom: 0.25rem;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h4 {
-  font-size: 1.14rem !important;
+  font-size: 1.2rem !important;
   margin: 1.6rem 0 0.7rem !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h5 {
-  font-size: 1.08rem !important;
+  font-size: 1.125rem !important;
   margin: 1.3rem 0 0.6rem !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] h6 {
-  font-size: 1rem !important;
+  font-size: 1.05rem !important;
   margin: 1.2rem 0 0.55rem !important;
 }
 
@@ -298,7 +298,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   border: 1px solid rgba(0, 0, 0, 0.22) !important;
   max-width: 100%;
   width: 100% !important;
-  font-size: 0.95rem;
+  font-size: 1rem;
   overflow: auto;
   background-color: #ffffff !important;
   color: #222222 !important;
@@ -387,16 +387,18 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 
 .lecture-render-root[data-lecture-theme="handout"] code:not(pre code) {
   display: inline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
   border: 1px solid #d4d7dd !important;
   background-color: #eceef2 !important;
   color: #2c353d !important;
   overflow-wrap: anywhere;
-  border-radius: 3px !important;
-  padding: 0.08em 0.42em !important;
-  margin: 0 2px;
-  font-size: 0.87em !important;
-  line-height: 1.4 !important;
-  letter-spacing: 0.01em !important;
+  border-radius: 4px !important;
+  padding: 0.1em 0.4em !important;
+  margin: 0 0.15em;
+  font-size: 1em !important;
+  line-height: 1.25 !important;
+  letter-spacing: 0 !important;
   vertical-align: baseline;
 }
 
@@ -414,15 +416,16 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   color: #333333 !important;
   border-bottom: 1px solid #d2d6dc !important;
   padding: 6px 16px !important;
+  font-size: 0.85rem !important;
 }
 
 .lecture-render-root[data-lecture-theme="handout"] .code-block-wrapper pre {
   background-color: #ffffff !important;
   color: #24292e !important;
   padding: 16px 20px !important;
-  line-height: 1.6 !important;
+  line-height: 1.65 !important;
   letter-spacing: normal !important;
-  font-size: 0.88rem !important;
+  font-size: 1rem !important;
 }
 
 /* KaTeX 数式の組版崩れ防止 */
@@ -451,7 +454,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   border-radius: 6px !important;
   margin: 1.8rem 0 !important;
   padding: 20px !important;
-  font-size: 15px !important;
+  font-size: 1rem !important;
   line-height: 1.3 !important;
   letter-spacing: normal !important;
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif !important;
@@ -491,8 +494,8 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 /* Slide Mode (16:9) Optimization for Handout */
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide {
   padding: 34px 48px 26px;
-  font-size: 0.94rem;
-  line-height: 1.58;
+  font-size: 1rem;
+  line-height: 1.6;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide > :first-child {
   margin-top: 0 !important;
@@ -501,12 +504,12 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   margin-bottom: 1rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .lecture-doc-title {
-  font-size: 1.75rem !important;
+  font-size: 1.9rem !important;
   line-height: 1.32 !important;
   margin: 0.3rem auto 0.45rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .lecture-doc-subtitle {
-  font-size: 1.18rem !important;
+  font-size: 1.25rem !important;
   margin: 0.2rem auto 0.55rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .lecture-doc-meta {
@@ -518,22 +521,22 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   padding: 0.65rem 1rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .description-text {
-  font-size: 0.9rem !important;
+  font-size: 0.95rem !important;
   line-height: 1.55 !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide h1 {
-  font-size: 1.58rem !important;
+  font-size: 1.75rem !important;
   line-height: 1.3 !important;
   margin: 0 auto 0.65rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide h2 {
-  font-size: 1.3rem !important;
+  font-size: 1.4rem !important;
   line-height: 1.35 !important;
   margin: 0.45rem 0 0.5rem !important;
   padding-bottom: 0.2rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide h3 {
-  font-size: 1.12rem !important;
+  font-size: 1.2rem !important;
   line-height: 1.35 !important;
   margin: 0.4rem 0 0.35rem !important;
   padding-bottom: 0.15rem !important;
@@ -563,7 +566,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide table:not(.mermaid-container *) {
   margin-top: 0.55rem !important;
   margin-bottom: 0.55rem !important;
-  font-size: 0.85rem !important;
+  font-size: 0.95rem !important;
   line-height: 1.45 !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide table:not(.mermaid-container *) th,
@@ -577,12 +580,12 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .code-block-header {
   padding: 4px 12px !important;
-  font-size: 11px !important;
+  font-size: 0.8rem !important;
 }
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide .code-block-wrapper pre {
   padding: 10px 14px !important;
-  font-size: 0.8rem !important;
-  line-height: 1.45 !important;
+  font-size: 0.9rem !important;
+  line-height: 1.5 !important;
   max-height: 300px;
   overflow: auto;
 }
