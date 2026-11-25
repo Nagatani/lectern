@@ -21,6 +21,12 @@ import {
   wrapSelectionWithPair,
 } from "./editor-features";
 import {
+  createEditorTabBar,
+  type EditorTabBarController,
+  type EditorTabDocument,
+  type EditorTabSnapshot,
+} from "./editor-tabs";
+import {
   createFileExplorer,
   type ExplorerFileEntry,
   type FileExplorerController,
@@ -101,6 +107,7 @@ const state = {
 // ============================================================================
 
 const elEditor = document.getElementById("markdown-editor") as HTMLTextAreaElement;
+const elEditorTabsBar = document.getElementById("editor-tabs-bar") as HTMLDivElement;
 const elEditorHighlight = document.getElementById("editor-highlight") as HTMLPreElement;
 const elLineNumbers = document.getElementById("line-numbers") as HTMLDivElement;
 const elEditorCursorPos = document.getElementById("editor-cursor-pos") as HTMLSpanElement;
@@ -175,6 +182,7 @@ const btnUpdaterClose = document.getElementById("btn-updater-close") as HTMLButt
 
 let findReplaceController: FindReplaceController | null = null;
 let fileExplorer: FileExplorerController | null = null;
+let editorTabBar: EditorTabBarController | null = null;
 let settingsController: SettingsController | null = null;
 let outlineQuickJump: OutlineQuickJumpController | null = null;
 let editorPreviewSync: EditorPreviewSyncController | null = null;
@@ -582,6 +590,7 @@ function scheduleAutoSave(): void {
 function markDirty(dirty: boolean): void {
   state.isDirty = dirty;
   if (dirty) {
+    editorTabBar?.updateActiveSnapshot({ content: elEditor.value });
     elSaveStatusBadge.textContent = "Modified";
     elSaveStatusBadge.className = "status-badge dirty";
     scheduleAutoSave();
@@ -590,6 +599,7 @@ function markDirty(dirty: boolean): void {
     elSaveStatusBadge.className = "status-badge saved";
     clearAutoSaveTimer();
   }
+  editorTabBar?.setTabDirty(dirty);
 }
 
 interface ActivityLogEntry {
@@ -805,6 +815,130 @@ function clearCurrentOpenFile(): void {
   updateSlideVisibility();
 }
 
+function captureEditorSnapshot(): EditorTabSnapshot {
+  return {
+    content: elEditor.value,
+    scrollTop: elEditor.scrollTop,
+    scrollLeft: elEditor.scrollLeft,
+    selectionStart: elEditor.selectionStart ?? 0,
+    selectionEnd: elEditor.selectionEnd ?? 0,
+    slideIndex: state.currentSlideIndex,
+    previewScrollTop: elPreviewViewport.scrollTop,
+  };
+}
+
+async function saveTabToDisk(tab: EditorTabDocument): Promise<boolean> {
+  if (!tab.filePath) return false;
+  const activeTab = editorTabBar?.getActiveTab();
+  const content = activeTab && activeTab.id === tab.id ? elEditor.value : tab.content;
+  try {
+    await invoke("save_markdown_file", {
+      filePath: tab.filePath,
+      content,
+    });
+    tab.content = content;
+    editorTabBar?.setTabDirty(false, tab.id);
+    if (activeTab && activeTab.id === tab.id) {
+      markDirty(false);
+    }
+    setStatus(`保存しました: ${tab.fileName}`);
+    return true;
+  } catch (err) {
+    setStatus(`保存エラー (${tab.fileName}): ${String(err)}`);
+    return false;
+  }
+}
+
+async function saveAllDirtyTabs(): Promise<boolean> {
+  if (!editorTabBar) {
+    if (state.isDirty && state.currentFilePath) {
+      await saveCurrentFile();
+    }
+    return !state.isDirty;
+  }
+  editorTabBar.updateActiveSnapshot(captureEditorSnapshot());
+  const dirtyTabs = editorTabBar.getDirtyTabs();
+  let allSaved = true;
+  for (const tab of dirtyTabs) {
+    const ok = await saveTabToDisk(tab);
+    if (!ok) allSaved = false;
+  }
+  return allSaved;
+}
+
+async function applyActiveTab(tab: EditorTabDocument | null): Promise<void> {
+  clearAutoSaveTimer();
+
+  if (!tab) {
+    clearCurrentOpenFile();
+    void fileExplorer?.setActiveFile("", { reveal: false });
+    return;
+  }
+
+  state.currentFilePath = tab.filePath;
+  state.currentFileName = tab.fileName;
+  state.currentSlideIndex = tab.slideIndex;
+
+  elEditor.value = tab.content;
+  elCurrentFileIndicator.textContent = tab.fileName;
+  markDirty(tab.isDirty);
+  updateLineNumbersAndStats();
+
+  // Restore cursor & scroll positions for this tab
+  const maxPos = tab.content.length;
+  const selStart = Math.min(tab.selectionStart, maxPos);
+  const selEnd = Math.min(tab.selectionEnd, maxPos);
+  try {
+    elEditor.setSelectionRange(selStart, selEnd);
+  } catch {
+    // Ignore selection errors when textarea is hidden/unfocused
+  }
+  elEditor.scrollTop = tab.scrollTop;
+  elEditor.scrollLeft = tab.scrollLeft;
+  elLineNumbers.scrollTop = tab.scrollTop;
+  elEditorHighlight.scrollTop = tab.scrollTop;
+  elEditorHighlight.scrollLeft = tab.scrollLeft;
+  updateCursorPosIndicator();
+
+  // Sync active highlight in file explorer
+  void fileExplorer?.setActiveFile(tab.filePath, { reveal: true });
+
+  // Render ONLY the active tab in the preview pane
+  await compileCurrentMarkdown();
+
+  if (state.mode === "document") {
+    elPreviewViewport.scrollTop = tab.previewScrollTop;
+  } else {
+    state.currentSlideIndex = Math.max(
+      0,
+      Math.min(tab.slideIndex, Math.max(0, state.totalSlides - 1))
+    );
+    updateSlideVisibility();
+  }
+}
+
+function setupEditorTabBar(): EditorTabBarController {
+  return createEditorTabBar({
+    container: elEditorTabsBar,
+    getActiveSnapshot: captureEditorSnapshot,
+    onActivateTab: async (tab) => {
+      await applyActiveTab(tab);
+    },
+    onConfirmCloseDirty: async (tab) => {
+      return await confirmUnsavedBeforeClose({
+        fileName: tab.fileName,
+        actionLabel: "タブを閉じる",
+      });
+    },
+    onSaveTab: async (tab) => {
+      return await saveTabToDisk(tab);
+    },
+    onNewFile: () => {
+      void createNewFileFlow();
+    },
+  });
+}
+
 function setupFileExplorer(): FileExplorerController {
   return createFileExplorer({
     treeEl: elFileTree,
@@ -815,15 +949,12 @@ function setupFileExplorer(): FileExplorerController {
         workspacePath: dirPath,
       }),
     onOpenFile: async (filePath, fileName) => {
-      if (state.isDirty && state.currentFilePath) {
-        await saveCurrentFile();
-      }
       await openFile(filePath, fileName);
     },
     onOpenWorkspace: async (dirPath) => {
-      if (state.isDirty && state.currentFilePath) {
-        await saveCurrentFile();
-      }
+      await saveAllDirtyTabs();
+      editorTabBar?.clearAllTabs();
+      state.currentFilePath = "";
       await loadWorkspace(dirPath);
     },
     onNavigateParent: async () => {
@@ -864,6 +995,15 @@ function setupFileExplorer(): FileExplorerController {
     },
     onStatus: (msg) => setStatus(msg),
     onEntryRenamed: (oldPath, newPath, isDir) => {
+      if (editorTabBar) {
+        const active = editorTabBar.handleEntryRenamed(oldPath, newPath, isDir);
+        if (active) {
+          state.currentFilePath = active.filePath;
+          state.currentFileName = active.fileName;
+          elCurrentFileIndicator.textContent = active.fileName;
+        }
+        return;
+      }
       if (!state.currentFilePath) return;
       const curNorm = normalizePathForCompare(state.currentFilePath);
       const oldNorm = normalizePathForCompare(oldPath);
@@ -877,6 +1017,10 @@ function setupFileExplorer(): FileExplorerController {
       }
     },
     onEntryDeleted: (deletedPath, isDir) => {
+      if (editorTabBar) {
+        editorTabBar.handleEntryDeleted(deletedPath, isDir);
+        return;
+      }
       if (!state.currentFilePath) return;
       const curNorm = normalizePathForCompare(state.currentFilePath);
       const delNorm = normalizePathForCompare(deletedPath);
@@ -957,6 +1101,22 @@ async function revealInExplorer(targetPath: string): Promise<void> {
 
 async function openFile(filePath: string, displayName: string): Promise<void> {
   try {
+    if (editorTabBar) {
+      const existing = editorTabBar.findTabByPath(filePath);
+      if (existing) {
+        if (editorTabBar.getActiveTab()?.id !== existing.id) {
+          editorTabBar.activateTab(existing.id, captureEditorSnapshot());
+        }
+        return;
+      }
+      const content = await invoke<string>("read_markdown_file", {
+        filePath,
+      });
+      editorTabBar.openOrActivateTab(filePath, displayName, content, captureEditorSnapshot());
+      setStatus(`ファイルを開きました: ${displayName}`);
+      return;
+    }
+
     const content = await invoke<string>("read_markdown_file", {
       filePath,
     });
@@ -1459,14 +1619,13 @@ function updateScrollSyncToggleUI(enabled: boolean): void {
 }
 
 async function openFolderFlow(): Promise<void> {
-  if (state.isDirty && state.currentFilePath) {
-    await saveCurrentFile();
-  }
+  await saveAllDirtyTabs();
   try {
     const selectedPath = await invoke<string | null>("pick_workspace_folder", {
       currentPath: state.workspacePath || null,
     });
     if (selectedPath) {
+      editorTabBar?.clearAllTabs();
       state.currentFilePath = "";
       await loadWorkspace(selectedPath);
     }
@@ -1478,6 +1637,7 @@ async function openFolderFlow(): Promise<void> {
       state.workspacePath
     );
     if (newPath) {
+      editorTabBar?.clearAllTabs();
       state.currentFilePath = "";
       await loadWorkspace(newPath);
     }
@@ -1530,14 +1690,18 @@ async function setupNativeDragDrop(): Promise<void> {
           const info = await invoke<DroppedPathInfo>("inspect_dropped_path", {
             path: droppedPath,
           });
-          if (state.isDirty && state.currentFilePath) {
-            await saveCurrentFile();
-          }
           if (info.is_dir) {
+            await saveAllDirtyTabs();
+            editorTabBar?.clearAllTabs();
             state.currentFilePath = "";
             await loadWorkspace(info.workspace_path);
           } else if (info.file_path && info.file_name) {
-            await loadWorkspace(info.workspace_path);
+            if (state.workspacePath !== info.workspace_path) {
+              await saveAllDirtyTabs();
+              editorTabBar?.clearAllTabs();
+              state.currentFilePath = "";
+              await loadWorkspace(info.workspace_path);
+            }
             await openFile(info.file_path, info.file_name);
           }
         } catch (err) {
@@ -1655,8 +1819,42 @@ function setupPaneLayoutAndResizers(): void {
 
   btnTogglePreview.addEventListener("click", () => togglePreviewVisibility());
 
-  // Global keyboard shortcuts: Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview), Cmd/Ctrl + , (Settings), Cmd/Ctrl + Shift + O (Outline)
+  // Global keyboard shortcuts:
+  // Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview), Cmd/Ctrl + , (Settings),
+  // Cmd/Ctrl + Shift + O (Outline), Cmd/Ctrl + W (Close Active Tab),
+  // Ctrl + Tab / Ctrl + Shift + Tab / Cmd+Alt+Arrow / Ctrl+PageUp/Down (Switch Tabs)
   window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "Tab") {
+      if (editorTabBar && editorTabBar.getTabs().length > 1) {
+        e.preventDefault();
+        editorTabBar.cycleTab(e.shiftKey ? -1 : 1, captureEditorSnapshot());
+        return;
+      }
+    }
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      if (e.key === "PageDown") {
+        e.preventDefault();
+        editorTabBar?.cycleTab(1, captureEditorSnapshot());
+        return;
+      }
+      if (e.key === "PageUp") {
+        e.preventDefault();
+        editorTabBar?.cycleTab(-1, captureEditorSnapshot());
+        return;
+      }
+    }
+    if (e.metaKey && e.altKey && !e.ctrlKey && !e.shiftKey) {
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        editorTabBar?.cycleTab(1, captureEditorSnapshot());
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        editorTabBar?.cycleTab(-1, captureEditorSnapshot());
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
       if (e.key.toLowerCase() === "o") {
         e.preventDefault();
@@ -1665,7 +1863,8 @@ function setupPaneLayoutAndResizers(): void {
       }
     }
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
-      if (e.key.toLowerCase() === "b") {
+      const key = e.key.toLowerCase();
+      if (key === "b") {
         e.preventDefault();
         toggleSidebarVisibility();
       } else if (e.key === "\\") {
@@ -1674,6 +1873,15 @@ function setupPaneLayoutAndResizers(): void {
       } else if (e.key === ",") {
         e.preventDefault();
         settingsController?.openModal();
+      } else if (key === "w") {
+        const activeTab = editorTabBar?.getActiveTab();
+        if (activeTab) {
+          e.preventDefault();
+          void editorTabBar?.closeTab(activeTab.id, captureEditorSnapshot());
+        }
+      } else if (key === "n") {
+        e.preventDefault();
+        void createNewFileFlow();
       }
     }
   });
@@ -1856,9 +2064,8 @@ function removeRecentWorkspace(workspacePath: string): void {
 }
 
 async function openRecentWorkspacePath(dirPath: string): Promise<void> {
-  if (state.isDirty && state.currentFilePath) {
-    await saveCurrentFile();
-  }
+  await saveAllDirtyTabs();
+  editorTabBar?.clearAllTabs();
   state.currentFilePath = "";
   const ok = await loadWorkspace(dirPath, { silentError: true });
   if (!ok) {
@@ -1970,10 +2177,14 @@ async function setupNativeMenuListener(): Promise<void> {
   }
 }
 
-function confirmUnsavedBeforeClose(): Promise<"save" | "discard" | "cancel"> {
+function confirmUnsavedBeforeClose(opts?: {
+  fileName?: string;
+  actionLabel?: string;
+}): Promise<"save" | "discard" | "cancel"> {
   return new Promise((resolve) => {
-    const targetName = state.currentFileName || "無題のドキュメント";
-    modalUnsavedDesc.textContent = `「${targetName}」に未保存の変更があります。終了する前に保存しますか？`;
+    const targetName = opts?.fileName || state.currentFileName || "無題のドキュメント";
+    const actionLabel = opts?.actionLabel || "終了";
+    modalUnsavedDesc.textContent = `「${targetName}」に未保存の変更があります。${actionLabel}する前に保存しますか？`;
     modalUnsavedClose.returnValue = "";
 
     const onClose = () => {
@@ -1993,9 +2204,12 @@ function confirmUnsavedBeforeClose(): Promise<"save" | "discard" | "cancel"> {
 }
 
 async function setupUnsavedCloseGuard(): Promise<void> {
+  const hasAnyUnsaved = (): boolean =>
+    state.isDirty || (editorTabBar?.hasDirtyTabs() ?? false);
+
   // Browser fallback
   window.addEventListener("beforeunload", (e) => {
-    if (state.isDirty) {
+    if (hasAnyUnsaved()) {
       e.preventDefault();
       e.returnValue = "";
     }
@@ -2006,21 +2220,30 @@ async function setupUnsavedCloseGuard(): Promise<void> {
     const appWindow = getCurrentWindow();
     let handlingClose = false;
     await appWindow.onCloseRequested(async (event) => {
-      if (!state.isDirty) {
+      if (!hasAnyUnsaved()) {
         return;
       }
       event.preventDefault();
       if (handlingClose) return;
       handlingClose = true;
       try {
-        const choice = await confirmUnsavedBeforeClose();
+        const dirtyTabs = editorTabBar?.getDirtyTabs() ?? [];
+        const label =
+          dirtyTabs.length > 1
+            ? `${dirtyTabs[0].fileName} 他 ${dirtyTabs.length - 1} 件のタブ`
+            : dirtyTabs[0]?.fileName || state.currentFileName || "無題のドキュメント";
+        const choice = await confirmUnsavedBeforeClose({
+          fileName: label,
+          actionLabel: "終了",
+        });
         if (choice === "save") {
-          await saveCurrentFile();
-          if (!state.isDirty) {
+          const allSaved = await saveAllDirtyTabs();
+          if (allSaved && !hasAnyUnsaved()) {
             await appWindow.destroy();
           }
         } else if (choice === "discard") {
           state.isDirty = false;
+          editorTabBar?.clearAllTabs();
           await appWindow.destroy();
         }
       } finally {
@@ -2189,6 +2412,7 @@ async function initApp(): Promise<void> {
     initialEnabled: settingsController.getSettings().syncScroll,
   });
   bindEvents();
+  editorTabBar = setupEditorTabBar();
   fileExplorer = setupFileExplorer();
   btnUpdaterInstall.addEventListener("click", () => void installPendingUpdate());
   findReplaceController = setupFindReplaceBar(
