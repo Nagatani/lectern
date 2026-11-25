@@ -618,6 +618,9 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     let goto_line = MenuItemBuilder::with_id("edit:goto-line", "指定行へ移動...")
         .accelerator("CmdOrCtrl+G")
         .build(app)?;
+    let open_outline = MenuItemBuilder::with_id("edit:open-outline", "見出しアウトラインへ移動...")
+        .accelerator("CmdOrCtrl+Shift+O")
+        .build(app)?;
     let dup_line = MenuItemBuilder::with_id("edit:duplicate-line", "行を複製")
         .accelerator("CmdOrCtrl+Shift+D")
         .build(app)?;
@@ -639,6 +642,7 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .item(&find_item)
         .item(&replace_item)
         .item(&goto_line)
+        .item(&open_outline)
         .separator()
         .item(&dup_line)
         .item(&del_line)

@@ -26,6 +26,12 @@ import {
   type FileExplorerController,
 } from "./file-explorer";
 import {
+  createEditorPreviewSync,
+  createOutlineQuickJump,
+  type EditorPreviewSyncController,
+  type OutlineQuickJumpController,
+} from "./outline-and-sync";
+import {
   createSettingsController,
   handleClipboardImagePaste,
   type SettingsController,
@@ -169,6 +175,8 @@ const btnUpdaterClose = document.getElementById("btn-updater-close") as HTMLButt
 let findReplaceController: FindReplaceController | null = null;
 let fileExplorer: FileExplorerController | null = null;
 let settingsController: SettingsController | null = null;
+let outlineQuickJump: OutlineQuickJumpController | null = null;
+let editorPreviewSync: EditorPreviewSyncController | null = null;
 let autoSaveTimer: number | null = null;
 let pendingUpdate: Update | null = null;
 
@@ -1617,8 +1625,15 @@ function setupPaneLayoutAndResizers(): void {
 
   btnTogglePreview.addEventListener("click", () => togglePreviewVisibility());
 
-  // Global keyboard shortcuts: Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview)
+  // Global keyboard shortcuts: Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview), Cmd/Ctrl + , (Settings), Cmd/Ctrl + Shift + O (Outline)
   window.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+      if (e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        outlineQuickJump?.open();
+        return;
+      }
+    }
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
       if (e.key.toLowerCase() === "b") {
         e.preventDefault();
@@ -1872,6 +1887,9 @@ async function setupNativeMenuListener(): Promise<void> {
         case "edit:goto-line":
           void gotoLineFlow();
           break;
+        case "edit:open-outline":
+          outlineQuickJump?.open();
+          break;
         case "edit:duplicate-line":
           duplicateSelectedLines(elEditor, replaceEditorRangeWithUndo);
           break;
@@ -2100,6 +2118,7 @@ async function installPendingUpdate(): Promise<void> {
 async function initApp(): Promise<void> {
   settingsController = createSettingsController({
     onChange: (settings) => {
+      editorPreviewSync?.setEnabled(settings.syncScroll);
       if (settings.autoSave && state.isDirty && state.currentFilePath) {
         scheduleAutoSave();
       } else if (!settings.autoSave) {
@@ -2107,6 +2126,31 @@ async function initApp(): Promise<void> {
       }
     },
     onLog: setStatus,
+  });
+  outlineQuickJump = createOutlineQuickJump({
+    getMarkdown: () => elEditor.value,
+    getCurrentLine: () => getCursorLineCol(elEditor).line,
+    onSelectHeading: (heading) => {
+      jumpToLine(elEditor, heading.line);
+      updateCursorPosIndicator();
+      editorPreviewSync?.syncNow({ smooth: true });
+    },
+    onStatus: setStatus,
+  });
+  editorPreviewSync = createEditorPreviewSync({
+    editor: elEditor,
+    previewViewport: elPreviewViewport,
+    getMode: () => state.mode,
+    getCurrentSlideIndex: () => state.currentSlideIndex,
+    onSlideChange: (slideIndex) => {
+      if (state.mode !== "slide") return;
+      const clamped = Math.max(0, Math.min(slideIndex, Math.max(0, state.totalSlides - 1)));
+      if (clamped !== state.currentSlideIndex) {
+        state.currentSlideIndex = clamped;
+        updateSlideVisibility();
+      }
+    },
+    initialEnabled: settingsController.getSettings().syncScroll,
   });
   bindEvents();
   fileExplorer = setupFileExplorer();
