@@ -2182,6 +2182,10 @@ async function initApp(): Promise<void> {
         updateSlideVisibility();
       }
     },
+    onEditorScrolled: () => {
+      elLineNumbers.scrollTop = elEditor.scrollTop;
+      elEditorHighlight.scrollTop = elEditor.scrollTop;
+    },
     initialEnabled: settingsController.getSettings().syncScroll,
   });
   bindEvents();

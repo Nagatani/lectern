@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  createEditorPreviewSync,
   extractMarkdownHeadings,
   filterHeadings,
   getSlideIndexAtCursor,
+  syncEditorToPreview,
   syncPreviewToEditor,
 } from "../src/outline-and-sync.ts";
 
@@ -381,5 +383,128 @@ describe("outline-and-sync: syncPreviewToEditor", () => {
     });
     assert.equal(slideRes.synced, false);
     assert.equal(slideChanged, false);
+  });
+});
+
+describe("outline-and-sync: syncEditorToPreview (bidirectional)", () => {
+  it("proportionally syncs editor.scrollTop from previewViewport.scrollTop in document mode", () => {
+    const editor = {
+      scrollTop: 0,
+      scrollHeight: 1500,
+      clientHeight: 500, // maxScroll = 1000 -> expected = 500
+    };
+    const previewViewport = {
+      scrollTop: 1000,
+      scrollHeight: 2600,
+      clientHeight: 600, // maxScroll = 2000 -> ratio = 0.5
+    };
+
+    const res = syncEditorToPreview({
+      enabled: true,
+      mode: "document",
+      editor,
+      previewViewport,
+    });
+
+    assert.equal(res.synced, true);
+    assert.equal(res.scrollRatio, 0.5);
+    assert.equal(res.targetScrollTop, 500);
+    assert.equal(editor.scrollTop, 500);
+  });
+
+  it("does nothing when enabled is false or mode is slide", () => {
+    const editor = {
+      scrollTop: 80,
+      scrollHeight: 1500,
+      clientHeight: 500,
+    };
+    const previewViewport = {
+      scrollTop: 1000,
+      scrollHeight: 2600,
+      clientHeight: 600,
+    };
+
+    const disabledRes = syncEditorToPreview({
+      enabled: false,
+      mode: "document",
+      editor,
+      previewViewport,
+    });
+    assert.equal(disabledRes.synced, false);
+    assert.equal(editor.scrollTop, 80);
+
+    const slideRes = syncEditorToPreview({
+      enabled: true,
+      mode: "slide",
+      editor,
+      previewViewport,
+    });
+    assert.equal(slideRes.synced, false);
+    assert.equal(editor.scrollTop, 80);
+  });
+
+  it("wires bidirectional scroll events without feedback loops and respects enabled=false", () => {
+    const makeScrollTarget = (scrollHeight: number, clientHeight: number) => {
+      const listeners = new Map<string, Set<() => void>>();
+      return {
+        value: "",
+        selectionStart: 0,
+        scrollTop: 0,
+        scrollHeight,
+        clientHeight,
+        addEventListener(type: string, fn: () => void) {
+          if (!listeners.has(type)) listeners.set(type, new Set());
+          listeners.get(type)!.add(fn);
+        },
+        removeEventListener(type: string, fn: () => void) {
+          listeners.get(type)?.delete(fn);
+        },
+        dispatch(type: string) {
+          for (const fn of listeners.get(type) ?? []) fn();
+        },
+      };
+    };
+
+    const editor = makeScrollTarget(1500, 500); // maxScroll = 1000
+    const preview = makeScrollTarget(2600, 600); // maxScroll = 2000
+    let editorScrolledCalls = 0;
+
+    const controller = createEditorPreviewSync({
+      editor: editor as unknown as HTMLTextAreaElement,
+      previewViewport: preview as unknown as HTMLElement,
+      getMode: () => "document",
+      getCurrentSlideIndex: () => 0,
+      onSlideChange: () => {},
+      onEditorScrolled: () => {
+        editorScrolledCalls += 1;
+      },
+      initialEnabled: true,
+    });
+
+    try {
+      // 1. Preview scrolls to 50% -> editor follows to 50% (500)
+      preview.scrollTop = 1000;
+      preview.dispatch("scroll");
+      assert.equal(editor.scrollTop, 500);
+      assert.equal(editorScrolledCalls, 1);
+
+      // Programmatic editor scroll event immediately afterwards must NOT bounce back to preview
+      preview.scrollTop = 1005;
+      editor.dispatch("scroll");
+      assert.equal(preview.scrollTop, 1005);
+
+      // 2. When disabled, neither direction syncs
+      controller.setEnabled(false);
+      editor.scrollTop = 0;
+      preview.scrollTop = 1800;
+      preview.dispatch("scroll");
+      assert.equal(editor.scrollTop, 0);
+
+      editor.scrollTop = 750;
+      editor.dispatch("scroll");
+      assert.equal(preview.scrollTop, 1800);
+    } finally {
+      controller.destroy();
+    }
   });
 });

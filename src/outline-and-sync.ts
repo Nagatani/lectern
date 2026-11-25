@@ -64,6 +64,21 @@ export interface SyncPreviewToEditorOptions {
   smooth?: boolean;
 }
 
+export interface SyncEditorToPreviewOptions {
+  /** Whether synchronization is enabled (defaults to true). */
+  enabled?: boolean;
+  /** Active preview mode ("document" | "slide"). */
+  mode: SyncRenderMode;
+  /** Markdown editor textarea (or minimal compatible object for testing). */
+  editor: Pick<HTMLTextAreaElement, "scrollTop" | "scrollHeight" | "clientHeight"> & {
+    scrollTo?: (options: ScrollToOptions) => void;
+  };
+  /** Preview scroll container (used in "document" mode). */
+  previewViewport: Pick<HTMLElement, "scrollTop" | "scrollHeight" | "clientHeight">;
+  /** Use smooth scroll behavior in "document" mode (defaults to false for responsive scroll tracking). */
+  smooth?: boolean;
+}
+
 export interface SyncPreviewResult {
   synced: boolean;
   mode: SyncRenderMode;
@@ -78,6 +93,8 @@ export interface EditorPreviewSyncDeps {
   getMode: () => SyncRenderMode;
   getCurrentSlideIndex: () => number;
   onSlideChange: (slideIndex: number) => void;
+  /** Optional callback invoked immediately after preview-to-editor scroll updates `editor.scrollTop`. */
+  onEditorScrolled?: () => void;
   /** Initial enabled state (defaults to true, or restored from storageKey if provided). */
   initialEnabled?: boolean;
   /** Optional localStorage key to persist the enabled toggle. */
@@ -379,8 +396,43 @@ export function syncPreviewToEditor(opts: SyncPreviewToEditorOptions): SyncPrevi
 }
 
 /**
- * Wires live editor scroll & cursor events to `syncPreviewToEditor` with
- * rAF throttling and a toggleable `enabled` flag.
+ * Synchronizes the editor scroll position with the preview viewport in `"document"` mode:
+ * proportionally maps `previewViewport.scrollTop` to `editor.scrollTop`.
+ */
+export function syncEditorToPreview(opts: SyncEditorToPreviewOptions): SyncPreviewResult {
+  if (opts.enabled === false || opts.mode !== "document") {
+    return { synced: false, mode: opts.mode };
+  }
+
+  const previewMaxScroll = Math.max(
+    0,
+    opts.previewViewport.scrollHeight - opts.previewViewport.clientHeight
+  );
+  const editorMaxScroll = Math.max(0, opts.editor.scrollHeight - opts.editor.clientHeight);
+
+  const scrollRatio =
+    previewMaxScroll > 0
+      ? Math.min(1, Math.max(0, opts.previewViewport.scrollTop / previewMaxScroll))
+      : 0;
+  const targetScrollTop = Math.round(scrollRatio * editorMaxScroll);
+
+  if (opts.smooth && typeof opts.editor.scrollTo === "function") {
+    opts.editor.scrollTo({ top: targetScrollTop, behavior: "smooth" });
+  } else {
+    opts.editor.scrollTop = targetScrollTop;
+  }
+
+  return {
+    synced: true,
+    mode: "document",
+    scrollRatio,
+    targetScrollTop,
+  };
+}
+
+/**
+ * Wires live editor & preview scroll and cursor events for bidirectional synchronization
+ * with rAF throttling, feedback-loop locking, and a toggleable `enabled` flag.
  */
 export function createEditorPreviewSync(deps: EditorPreviewSyncDeps): EditorPreviewSyncController {
   let enabled = deps.initialEnabled ?? true;
@@ -394,11 +446,30 @@ export function createEditorPreviewSync(deps: EditorPreviewSyncDeps): EditorPrev
     }
   }
 
-  let scrollRafId: number | null = null;
+  let editorScrollRafId: number | null = null;
+  let previewScrollRafId: number | null = null;
   let slideRafId: number | null = null;
 
-  const runSync = (smooth = false): SyncPreviewResult =>
-    syncPreviewToEditor({
+  // Direction lock prevents programmatic scrollTop updates from triggering a feedback loop.
+  let activeScrollSource: "editor" | "preview" | null = null;
+  let scrollLockTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const lockScrollSource = (source: "editor" | "preview", durationMs = 120): void => {
+    activeScrollSource = source;
+    if (scrollLockTimer !== null) {
+      clearTimeout(scrollLockTimer);
+    }
+    scrollLockTimer = setTimeout(() => {
+      activeScrollSource = null;
+      scrollLockTimer = null;
+    }, durationMs);
+  };
+
+  const runSync = (smooth = false): SyncPreviewResult => {
+    if (enabled && deps.getMode() === "document") {
+      lockScrollSource("editor", smooth ? 350 : 120);
+    }
+    return syncPreviewToEditor({
       enabled,
       mode: deps.getMode(),
       editor: deps.editor,
@@ -407,17 +478,52 @@ export function createEditorPreviewSync(deps: EditorPreviewSyncDeps): EditorPrev
       onSlideChange: deps.onSlideChange,
       smooth,
     });
+  };
+
+  const runReverseSync = (smooth = false): SyncPreviewResult => {
+    if (enabled && deps.getMode() === "document") {
+      lockScrollSource("preview", smooth ? 350 : 120);
+    }
+    const res = syncEditorToPreview({
+      enabled,
+      mode: deps.getMode(),
+      editor: deps.editor,
+      previewViewport: deps.previewViewport,
+      smooth,
+    });
+    if (res.synced) {
+      deps.onEditorScrolled?.();
+    }
+    return res;
+  };
 
   const handleEditorScroll = (): void => {
     if (!enabled || deps.getMode() !== "document") return;
-    if (scrollRafId !== null) return;
+    if (activeScrollSource === "preview") return;
+    lockScrollSource("editor", 120);
+    if (editorScrollRafId !== null) return;
     if (typeof requestAnimationFrame === "function") {
-      scrollRafId = requestAnimationFrame(() => {
-        scrollRafId = null;
+      editorScrollRafId = requestAnimationFrame(() => {
+        editorScrollRafId = null;
         runSync(false);
       });
     } else {
       runSync(false);
+    }
+  };
+
+  const handlePreviewScroll = (): void => {
+    if (!enabled || deps.getMode() !== "document") return;
+    if (activeScrollSource === "editor") return;
+    lockScrollSource("preview", 120);
+    if (previewScrollRafId !== null) return;
+    if (typeof requestAnimationFrame === "function") {
+      previewScrollRafId = requestAnimationFrame(() => {
+        previewScrollRafId = null;
+        runReverseSync(false);
+      });
+    } else {
+      runReverseSync(false);
     }
   };
 
@@ -435,6 +541,7 @@ export function createEditorPreviewSync(deps: EditorPreviewSyncDeps): EditorPrev
   };
 
   deps.editor.addEventListener("scroll", handleEditorScroll, { passive: true });
+  deps.previewViewport.addEventListener("scroll", handlePreviewScroll, { passive: true });
   deps.editor.addEventListener("keyup", handleCursorMove);
   deps.editor.addEventListener("click", handleCursorMove);
   deps.editor.addEventListener("input", handleCursorMove);
@@ -472,17 +579,27 @@ export function createEditorPreviewSync(deps: EditorPreviewSyncDeps): EditorPrev
     },
     destroy() {
       deps.editor.removeEventListener("scroll", handleEditorScroll);
+      deps.previewViewport.removeEventListener("scroll", handlePreviewScroll);
       deps.editor.removeEventListener("keyup", handleCursorMove);
       deps.editor.removeEventListener("click", handleCursorMove);
       deps.editor.removeEventListener("input", handleCursorMove);
-      if (scrollRafId !== null && typeof cancelAnimationFrame === "function") {
-        cancelAnimationFrame(scrollRafId);
-        scrollRafId = null;
+      if (editorScrollRafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(editorScrollRafId);
+        editorScrollRafId = null;
+      }
+      if (previewScrollRafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(previewScrollRafId);
+        previewScrollRafId = null;
       }
       if (slideRafId !== null && typeof cancelAnimationFrame === "function") {
         cancelAnimationFrame(slideRafId);
         slideRafId = null;
       }
+      if (scrollLockTimer !== null) {
+        clearTimeout(scrollLockTimer);
+        scrollLockTimer = null;
+      }
+      activeScrollSource = null;
     },
   };
 }
