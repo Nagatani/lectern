@@ -108,7 +108,8 @@
             <span class="sidebar-title">📁 ファイル一覧</span>
             <div class="sidebar-actions">
               <button type="button" id="btn-parent-dir" class="btn btn-icon btn-sm" aria-label="親フォルダへ移動" title="上の階層（親ディレクトリ）へ移動">⬆️</button>
-              <button type="button" id="btn-reveal-explorer" class="btn btn-icon btn-sm" aria-label="エクスプローラーで開く" title="現在のフォルダをFinder / エクスプローラーで開く">↗</button>
+              <button type="button" id="btn-reveal-explorer" class="btn btn-icon btn-sm" aria-label="Finder / エクスプローラーで開く" title="現在のフォルダをFinder / エクスプローラーで開く (Cmd+Shift+R / Ctrl+Shift+R)">↗</button>
+              <button type="button" id="btn-open-terminal" class="btn btn-icon btn-sm" aria-label="ターミナルで開く" title="現在のフォルダをターミナルで開く (Cmd+Shift+T / Ctrl+Shift+T)">&gt;_</button>
               <button type="button" id="btn-refresh-tree" class="btn btn-icon btn-sm" aria-label="ツリー更新" title="再読み込み">↻</button>
               <button type="button" id="btn-close-sidebar" class="btn btn-icon btn-sm" aria-label="ファイル一覧を隠す" title="ファイル一覧を非表示">✕</button>
             </div>
@@ -262,23 +263,9 @@
       </form>
     </dialog>
 
-    <!-- Modal Dialog: Export Result / Notification -->
-    <dialog id="modal-export" closedby="any" aria-labelledby="modal-export-title">
-      <form method="dialog" class="dialog-form">
-        <h2 id="modal-export-title" class="dialog-title">出力完了</h2>
-        <p id="modal-export-message" class="dialog-desc"></p>
-        <div class="dialog-field">
-          <label for="modal-export-path">出力先ファイルパス:</label>
-          <input type="text" id="modal-export-path" class="dialog-input" readonly />
-        </div>
-        <div class="dialog-actions">
-          <button type="button" id="btn-reveal-exported" class="btn btn-secondary">
-            📂 保存先をFinder / エクスプローラーで開く
-          </button>
-          <button type="submit" value="close" class="btn btn-primary" autofocus>閉じる</button>
-        </div>
-      </form>
-    </dialog>
+    <!-- Non-blocking Toast Notification Region (Popover manual + ARIA live fallback) -->
+    <div id="toast-region" class="toast-region" popover="manual" role="region" aria-label="通知"></div>
+    <div id="toast-live-region" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
     <!-- Modal Dialog: Lecture Markdown Syntax Guide -->
     <dialog id="modal-help" closedby="any" aria-labelledby="modal-help-title">

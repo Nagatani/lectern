@@ -135,6 +135,7 @@ const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButt
 
 const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
 const btnRevealExplorer = document.getElementById("btn-reveal-explorer") as HTMLButtonElement;
+const btnOpenTerminal = document.getElementById("btn-open-terminal") as HTMLButtonElement | null;
 const btnRefreshTree = document.getElementById("btn-refresh-tree") as HTMLButtonElement;
 const btnModeDoc = document.getElementById("mode-document") as HTMLButtonElement;
 const btnModeSlide = document.getElementById("mode-slide") as HTMLButtonElement;
@@ -157,11 +158,8 @@ const inputThemeId = document.getElementById("theme-id-input") as HTMLInputEleme
 const checkboxSyncFrontmatter = document.getElementById("theme-sync-frontmatter") as HTMLInputElement;
 const textareaThemeCss = document.getElementById("theme-css-textarea") as HTMLTextAreaElement;
 
-const modalExport = document.getElementById("modal-export") as HTMLDialogElement;
-const modalExportTitle = document.getElementById("modal-export-title") as HTMLHeadingElement;
-const modalExportMessage = document.getElementById("modal-export-message") as HTMLParagraphElement;
-const modalExportPath = document.getElementById("modal-export-path") as HTMLInputElement;
-const btnRevealExported = document.getElementById("btn-reveal-exported") as HTMLButtonElement;
+const elToastRegion = document.getElementById("toast-region") as HTMLDivElement;
+const elToastLiveRegion = document.getElementById("toast-live-region") as HTMLDivElement;
 
 const modalHelp = document.getElementById("modal-help") as HTMLDialogElement;
 const modalLogs = document.getElementById("modal-logs") as HTMLDialogElement;
@@ -243,12 +241,187 @@ function promptModal(title: string, desc: string, defaultValue = ""): Promise<st
   });
 }
 
-function showExportModal(title: string, message: string, outputPath: string): void {
-  modalExportTitle.textContent = title;
-  modalExportMessage.textContent = message;
-  modalExportPath.value = outputPath;
-  modalExport.returnValue = "";
-  modalExport.showModal();
+function announceToastMessage(text: string): void {
+  const docWithAriaNotify = document as Document & {
+    ariaNotify?: (message: string, options?: { priority?: "normal" | "high" }) => void;
+  };
+  if (typeof docWithAriaNotify.ariaNotify === "function") {
+    try {
+      docWithAriaNotify.ariaNotify(text, { priority: "normal" });
+      return;
+    } catch {
+      // Fallback to ARIA live region below
+    }
+  }
+  elToastLiveRegion.textContent = "";
+  window.setTimeout(() => {
+    elToastLiveRegion.textContent = text;
+  }, 20);
+}
+
+function openToastRegionPopover(): void {
+  elToastRegion.classList.add("is-open");
+  if (typeof elToastRegion.showPopover === "function") {
+    try {
+      if (!elToastRegion.matches(":popover-open")) {
+        elToastRegion.showPopover();
+      }
+    } catch {
+      // Ignore if already open or unsupported
+    }
+  }
+}
+
+function closeToastRegionPopoverIfEmpty(): void {
+  if (elToastRegion.childElementCount > 0) return;
+  elToastRegion.classList.remove("is-open");
+  if (typeof elToastRegion.hidePopover === "function") {
+    try {
+      if (elToastRegion.matches(":popover-open")) {
+        elToastRegion.hidePopover();
+      }
+    } catch {
+      // Ignore if already closed
+    }
+  }
+}
+
+function showExportToast(title: string, message: string, outputPath: string): void {
+  const priorFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  const toast = document.createElement("div");
+  toast.className = "toast-item";
+  toast.setAttribute("role", "status");
+
+  const header = document.createElement("div");
+  header.className = "toast-header";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "toast-title";
+  titleEl.textContent = title;
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "toast-close-btn";
+  closeBtn.setAttribute("aria-label", "通知を閉じる");
+  closeBtn.title = "閉じる";
+  closeBtn.textContent = "✕";
+
+  header.appendChild(titleEl);
+  header.appendChild(closeBtn);
+  toast.appendChild(header);
+
+  if (message) {
+    const msgEl = document.createElement("p");
+    msgEl.className = "toast-message";
+    msgEl.textContent = message;
+    toast.appendChild(msgEl);
+  }
+
+  if (outputPath) {
+    const pathEl = document.createElement("div");
+    pathEl.className = "toast-path";
+    pathEl.textContent = outputPath;
+    pathEl.title = outputPath;
+    toast.appendChild(pathEl);
+
+    const actions = document.createElement("div");
+    actions.className = "toast-actions";
+
+    const btnReveal = document.createElement("button");
+    btnReveal.type = "button";
+    btnReveal.className = "toast-action-btn";
+    btnReveal.textContent = "📂 Finder / エクスプローラーで開く";
+    btnReveal.addEventListener("click", () => {
+      void revealInExplorer(outputPath);
+    });
+
+    const btnTerm = document.createElement("button");
+    btnTerm.type = "button";
+    btnTerm.className = "toast-action-btn";
+    btnTerm.textContent = ">_ ターミナルで開く";
+    btnTerm.addEventListener("click", () => {
+      void openInTerminal(outputPath);
+    });
+
+    actions.appendChild(btnReveal);
+    actions.appendChild(btnTerm);
+    toast.appendChild(actions);
+  }
+
+  let dismissTimer: number | null = null;
+  let isHovered = false;
+  let isFocused = false;
+  let dismissed = false;
+
+  const clearTimer = (): void => {
+    if (dismissTimer !== null) {
+      window.clearTimeout(dismissTimer);
+      dismissTimer = null;
+    }
+  };
+
+  const dismiss = (manual: boolean): void => {
+    if (dismissed) return;
+    dismissed = true;
+    clearTimer();
+
+    const wasFocused = toast.contains(document.activeElement);
+    const nextToast =
+      (toast.nextElementSibling as HTMLElement | null) ??
+      (toast.previousElementSibling as HTMLElement | null);
+
+    toast.classList.add("is-closing");
+    window.setTimeout(() => {
+      toast.remove();
+      closeToastRegionPopoverIfEmpty();
+      if (manual && wasFocused) {
+        const nextBtn = nextToast?.querySelector<HTMLElement>("button");
+        if (nextBtn) {
+          nextBtn.focus();
+        } else if (priorFocus && priorFocus.isConnected) {
+          priorFocus.focus();
+        }
+      }
+    }, 160);
+  };
+
+  const scheduleDismiss = (delayMs = 6500): void => {
+    clearTimer();
+    if (isHovered || isFocused || dismissed) return;
+    dismissTimer = window.setTimeout(() => {
+      dismiss(false);
+    }, delayMs);
+  };
+
+  closeBtn.addEventListener("click", () => dismiss(true));
+  toast.addEventListener("pointerenter", () => {
+    isHovered = true;
+    clearTimer();
+  });
+  toast.addEventListener("pointerleave", () => {
+    isHovered = false;
+    scheduleDismiss(3000);
+  });
+  toast.addEventListener("focusin", () => {
+    isFocused = true;
+    clearTimer();
+  });
+  toast.addEventListener("focusout", () => {
+    isFocused = toast.contains(document.activeElement);
+    if (!isFocused) {
+      scheduleDismiss(3000);
+    }
+  });
+
+  elToastRegion.appendChild(toast);
+  openToastRegionPopover();
+  scheduleDismiss(6500);
+
+  const announcement = outputPath
+    ? `${title}。${message} 操作ボタンがあります。`
+    : `${title}。${message}`;
+  announceToastMessage(announcement);
 }
 
 function toggleColorScheme(): void {
@@ -1093,9 +1266,19 @@ async function revealInExplorer(targetPath: string): Promise<void> {
   if (!targetPath) return;
   try {
     await invoke("reveal_in_file_explorer", { path: targetPath });
-    setStatus(`ファイルエクスプローラーで開きました: ${targetPath}`);
+    setStatus(`Finder / エクスプローラーで開きました: ${targetPath}`);
   } catch (err) {
     setStatus(`エクスプローラー起動エラー: ${String(err)}`);
+  }
+}
+
+async function openInTerminal(targetPath: string): Promise<void> {
+  if (!targetPath) return;
+  try {
+    await invoke("open_in_terminal", { path: targetPath });
+    setStatus(`ターミナルでディレクトリを開きました: ${targetPath}`);
+  } catch (err) {
+    setStatus(`ターミナル起動エラー: ${String(err)}`);
   }
 }
 
@@ -1220,7 +1403,7 @@ async function exportHtmlFlow(): Promise<void> {
       return;
     }
     setStatus(res.message);
-    showExportModal("🌐 HTML出力完了", res.message, res.output_path);
+    showExportToast("🌐 HTML出力完了", res.message, res.output_path);
   } catch (err) {
     setStatus(`HTML出力エラー: ${String(err)}`);
   }
@@ -1264,7 +1447,7 @@ async function exportSlideshowHtmlFlow(): Promise<void> {
       return;
     }
     setStatus(res.message);
-    showExportModal("📽️ スライドショーHTML出力完了", res.message, res.output_path);
+    showExportToast("📽️ スライドショーHTML出力完了", res.message, res.output_path);
   } catch (err) {
     setStatus(`スライドショーHTML出力エラー: ${String(err)}`);
   }
@@ -1292,7 +1475,7 @@ async function exportPdfFlow(): Promise<void> {
       return;
     }
     setStatus(res.message);
-    showExportModal("📑 PDF出力完了", res.message, res.output_path);
+    showExportToast("📑 PDF出力完了", res.message, res.output_path);
   } catch (err) {
     setStatus(`PDF出力エラー: ${String(err)} — WebView印刷ダイアログを開きます`);
     window.print();
@@ -1552,6 +1735,9 @@ function bindEvents(): void {
   btnRevealExplorer.addEventListener("click", () =>
     void revealInExplorer(state.currentFilePath || state.workspacePath)
   );
+  btnOpenTerminal?.addEventListener("click", () =>
+    void openInTerminal(state.currentFilePath || state.workspacePath)
+  );
   elWorkspacePathLabel.addEventListener("click", () =>
     void revealInExplorer(state.workspacePath)
   );
@@ -1560,13 +1746,6 @@ function bindEvents(): void {
       void fileExplorer.refresh();
     } else {
       void loadWorkspace(state.workspacePath);
-    }
-  });
-
-  // Reveal exported file in Finder / Explorer from export modal
-  btnRevealExported.addEventListener("click", () => {
-    if (modalExportPath.value) {
-      void revealInExplorer(modalExportPath.value);
     }
   });
 
@@ -2114,6 +2293,9 @@ async function setupNativeMenuListener(): Promise<void> {
           break;
         case "file:reveal-explorer":
           void revealInExplorer(state.currentFilePath || state.workspacePath);
+          break;
+        case "file:open-terminal":
+          void openInTerminal(state.currentFilePath || state.workspacePath);
           break;
         case "edit:find":
           findReplaceController?.openFind(false);

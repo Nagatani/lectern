@@ -1732,3 +1732,153 @@ dialog::backdrop {
 }
 
 
+
+/* ==========================================================================
+   Non-blocking Toast Notification Region (Popover API manual + Fallback)
+   ========================================================================== */
+.toast-region {
+  position: fixed;
+  inset: auto 16px 36px auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  width: min(420px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 1500;
+}
+
+.toast-region:is(:popover-open, .is-open) {
+  display: flex;
+}
+
+.toast-item {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  border-left: 4px solid var(--brand);
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition-behavior: allow-discrete;
+}
+
+@starting-style {
+  .toast-item {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.toast-item.is-closing {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-item {
+    transition: none;
+    transform: none;
+  }
+}
+
+.toast-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.toast-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.toast-close-btn {
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.toast-close-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.toast-close-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.toast-message {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.toast-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.toast-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  min-height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.toast-action-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}

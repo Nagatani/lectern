@@ -137,6 +137,64 @@ fn reveal_in_file_explorer(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_in_terminal(path: String) -> Result<(), String> {
+    let target = Path::new(&path);
+    if !target.exists() {
+        return Err(format!("指定されたパスが存在しません: {}", path));
+    }
+    let dir = if target.is_file() {
+        target.parent().unwrap_or(target)
+    } else {
+        target
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .arg(dir)
+            .spawn()
+            .map_err(|e| format!("ターミナルの起動に失敗しました: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let wt_ok = Command::new("wt.exe")
+            .arg("-d")
+            .arg(dir)
+            .spawn()
+            .is_ok();
+        if !wt_ok {
+            Command::new("cmd")
+                .args(["/C", "start", "cmd", "/K", "cd", "/D"])
+                .arg(dir)
+                .spawn()
+                .map_err(|e| format!("コマンドプロンプトの起動に失敗しました: {}", e))?;
+        }
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let launched = [
+            "x-terminal-emulator",
+            "gnome-terminal",
+            "konsole",
+            "xfce4-terminal",
+            "alacritty",
+            "xterm",
+        ]
+        .iter()
+        .any(|bin| Command::new(bin).current_dir(dir).spawn().is_ok());
+        if !launched {
+            return Err("利用可能なターミナルアプリが見つかりませんでした".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 async fn pick_workspace_folder(current_path: Option<String>) -> Option<String> {
     let mut dialog = rfd::AsyncFileDialog::new().set_title("講義フォルダ（ワークスペース）を選択");
     if let Some(p) = current_path.filter(|s| !s.trim().is_empty()) {
@@ -581,9 +639,15 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     let export_pdf = MenuItemBuilder::with_id("file:export-pdf", "PDF として出力...")
         .accelerator("CmdOrCtrl+Shift+P")
         .build(app)?;
-    let reveal_explorer =
-        MenuItemBuilder::with_id("file:reveal-explorer", "Finder / エクスプローラーで表示")
-            .accelerator("CmdOrCtrl+Shift+R")
+    let reveal_explorer = MenuItemBuilder::with_id(
+        "file:reveal-explorer",
+        "Finder / エクスプローラーでディレクトリを開く",
+    )
+    .accelerator("CmdOrCtrl+Shift+R")
+    .build(app)?;
+    let open_terminal =
+        MenuItemBuilder::with_id("file:open-terminal", "ターミナルでディレクトリを開く")
+            .accelerator("CmdOrCtrl+Shift+T")
             .build(app)?;
 
     #[allow(unused_mut)]
@@ -598,7 +662,8 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .item(&export_slideshow)
         .item(&export_pdf)
         .separator()
-        .item(&reveal_explorer);
+        .item(&reveal_explorer)
+        .item(&open_terminal);
 
     #[cfg(not(target_os = "macos"))]
     {
@@ -808,6 +873,7 @@ pub fn run() {
             get_parent_directory,
             inspect_dropped_path,
             reveal_in_file_explorer,
+            open_in_terminal,
             pick_workspace_folder,
             pick_image_file,
             save_pasted_image,
