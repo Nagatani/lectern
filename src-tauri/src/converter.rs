@@ -1121,6 +1121,20 @@ pub fn escape_html(input: &str) -> String {
 }
 
 /// エクスポートおよびPDF印刷用の100%自己完結型スタンドアロンHTML（外部CSS・外部スクリプト一切なし）を生成する
+/// HTML 出力用の埋め込み favicon（`data:image/svg+xml;base64,...`）を生成する。
+/// ドキュメント出力とスライド／スライドショー出力で異なるアイコンを返す。
+fn build_embedded_favicon_data_uri(mode: &str) -> String {
+    let svg = if mode == "slide" {
+        // スライド／プレゼン用: 紫グラデーション背景＋16:9スクリーン＋再生アイコン
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#4338ca"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><rect x="10" y="14" width="44" height="30" rx="4" fill="#ffffff"/><polygon points="28,22 28,36 40,29" fill="#6d28d9"/><path d="M32 44v8M22 52h20" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/></svg>"##
+    } else {
+        // ドキュメント（講義資料）用: 青グラデーション背景＋折り目付き文書シート＋本文ライン
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#2563eb"/><stop offset="100%" stop-color="#1d4ed8"/></linearGradient></defs><rect width="64" height="64" rx="14" fill="url(#g)"/><path d="M18 12h20l10 10v30a3 3 0 0 1-3 3H18a3 3 0 0 1-3-3V15a3 3 0 0 1 3-3z" fill="#ffffff"/><path d="M38 12v10h10z" fill="#bfdbfe"/><rect x="22" y="28" width="20" height="3.5" rx="1.75" fill="#2563eb"/><rect x="22" y="36" width="18" height="3.5" rx="1.75" fill="#60a5fa"/><rect x="22" y="44" width="13" height="3.5" rx="1.75" fill="#93c5fd"/></svg>"##
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(svg.as_bytes());
+    format!("data:image/svg+xml;base64,{}", encoded)
+}
+
 pub fn build_standalone_html(
     markdown: &str,
     rendered_body_html: Option<&str>,
@@ -1585,6 +1599,8 @@ pub fn build_standalone_html_with_base_dir(
         ""
     };
 
+    let favicon_data_uri = build_embedded_favicon_data_uri(mode);
+
     format!(
         r#"<!doctype html>
 <html lang="ja">
@@ -1592,6 +1608,7 @@ pub fn build_standalone_html_with_base_dir(
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title}</title>
+  <link rel="icon" type="image/svg+xml" href="{favicon_data_uri}" />
   <style id="katex-standalone-css">
 {katex_inlined_css}
   </style>
@@ -3773,6 +3790,48 @@ title: データベース設計
         let slide_html = build_standalone_html(md, None, "slide", None, None);
         assert!(!slide_html.contains(r#"id="doc-toc-toggle""#));
         assert!(!slide_html.contains(r#"id="doc-toc-drawer""#));
+    }
+
+    #[test]
+    fn test_standalone_html_embeds_distinct_base64_favicons_for_document_and_slide() {
+        let md = "# Favicon Test\n\nContent\n\n---\n\n# Slide 2";
+        let doc_html = build_standalone_html(md, None, "document", None, None);
+        let slide_html = build_standalone_html(md, None, "slide", None, None);
+        let slideshow_html = build_slideshow_html_with_base_dir(md, None, None, None, None);
+
+        let doc_uri = build_embedded_favicon_data_uri("document");
+        let slide_uri = build_embedded_favicon_data_uri("slide");
+
+        assert!(doc_uri.starts_with("data:image/svg+xml;base64,"));
+        assert!(slide_uri.starts_with("data:image/svg+xml;base64,"));
+        assert_ne!(doc_uri, slide_uri);
+
+        // Decode Base64 payloads to verify valid SVG markup
+        let doc_b64 = doc_uri.strip_prefix("data:image/svg+xml;base64,").unwrap();
+        let slide_b64 = slide_uri.strip_prefix("data:image/svg+xml;base64,").unwrap();
+        let doc_svg = String::from_utf8(
+            base64::engine::general_purpose::STANDARD.decode(doc_b64).unwrap(),
+        )
+        .unwrap();
+        let slide_svg = String::from_utf8(
+            base64::engine::general_purpose::STANDARD.decode(slide_b64).unwrap(),
+        )
+        .unwrap();
+        assert!(doc_svg.starts_with("<svg ") && doc_svg.ends_with("</svg>"));
+        assert!(slide_svg.starts_with("<svg ") && slide_svg.ends_with("</svg>"));
+
+        let expected_doc_tag = format!(
+            r#"<link rel="icon" type="image/svg+xml" href="{}" />"#,
+            doc_uri
+        );
+        let expected_slide_tag = format!(
+            r#"<link rel="icon" type="image/svg+xml" href="{}" />"#,
+            slide_uri
+        );
+
+        assert!(doc_html.contains(&expected_doc_tag));
+        assert!(slide_html.contains(&expected_slide_tag));
+        assert!(slideshow_html.contains(&expected_slide_tag));
     }
 
     #[test]
