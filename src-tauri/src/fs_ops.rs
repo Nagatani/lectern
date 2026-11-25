@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static PASTE_IMAGE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -307,6 +311,53 @@ pub fn delete_entry(target_path: &Path) -> Result<(), String> {
     }
 }
 
+/// クリップボードから貼り付けられた画像を `<base_dir>/images/` に衝突安全に保存し、
+/// Markdown 用の相対パス `"images/<filename>"` を返す
+pub fn save_pasted_image(base_dir: &Path, image_bytes: &[u8], ext: &str) -> Result<String, String> {
+    if image_bytes.is_empty() {
+        return Err("画像データが空です".to_string());
+    }
+
+    let cleaned_ext = ext.trim().trim_start_matches('.').to_ascii_lowercase();
+    let safe_ext = match cleaned_ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => cleaned_ext.as_str(),
+        _ => "png",
+    };
+
+    let images_dir = base_dir.join("images");
+    fs::create_dir_all(&images_dir).map_err(|e| {
+        format!(
+            "画像保存先フォルダの作成に失敗しました ({}): {}",
+            images_dir.display(),
+            e
+        )
+    })?;
+
+    let unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let (filename, target_path) = loop {
+        let counter = PASTE_IMAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate_name = format!("paste_{}_{}.{}", unix_ms, counter, safe_ext);
+        let candidate_path = images_dir.join(&candidate_name);
+        if !candidate_path.exists() {
+            break (candidate_name, candidate_path);
+        }
+    };
+
+    fs::write(&target_path, image_bytes).map_err(|e| {
+        format!(
+            "貼り付け画像の保存に失敗しました ({}): {}",
+            target_path.display(),
+            e
+        )
+    })?;
+
+    Ok(format!("images/{}", filename))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +522,62 @@ mod tests {
 
         // Root path rejected
         assert!(delete_entry(Path::new("/")).is_err());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn save_pasted_image_saves_with_validated_ext_and_no_collisions() {
+        let tmp = make_temp_dir("paste_img");
+        let sample_bytes = b"\x89PNG\r\n\x1a\nfake-image-payload";
+
+        // Rejects empty bytes
+        let empty_err = save_pasted_image(&tmp, &[], "png").unwrap_err();
+        assert!(empty_err.contains("空"));
+
+        // Creates images/ directory and saves valid PNG
+        let rel_png = save_pasted_image(&tmp, sample_bytes, "png").unwrap();
+        assert!(rel_png.starts_with("images/paste_"));
+        assert!(rel_png.ends_with(".png"));
+        let saved_png = tmp.join(&rel_png);
+        assert!(saved_png.exists());
+        assert_eq!(fs::read(&saved_png).unwrap(), sample_bytes);
+
+        // Allowed extensions (case-insensitive, optional leading dot)
+        for (input_ext, expected_suffix) in [
+            ("jpg", ".jpg"),
+            ("JPEG", ".jpeg"),
+            (".gif", ".gif"),
+            (" webp ", ".webp"),
+        ] {
+            let rel = save_pasted_image(&tmp, b"img-data", input_ext).unwrap();
+            assert!(
+                rel.ends_with(expected_suffix),
+                "expected {} to end with {}",
+                rel,
+                expected_suffix
+            );
+            assert!(tmp.join(&rel).exists());
+        }
+
+        // Unsupported / unsafe extensions fall back to .png
+        for unsafe_ext in ["", "svg", "exe", "../evil.sh", "png/../../x"] {
+            let rel = save_pasted_image(&tmp, b"fallback-data", unsafe_ext).unwrap();
+            assert!(
+                rel.ends_with(".png"),
+                "unsafe ext '{}' should default to .png, got {}",
+                unsafe_ext,
+                rel
+            );
+            assert!(tmp.join(&rel).exists());
+        }
+
+        // Rapid consecutive calls produce unique filenames
+        let rel_a = save_pasted_image(&tmp, b"a", "png").unwrap();
+        let rel_b = save_pasted_image(&tmp, b"b", "png").unwrap();
+        assert_ne!(rel_a, rel_b);
+        assert_eq!(fs::read(tmp.join(&rel_a)).unwrap(), b"a");
+        assert_eq!(fs::read(tmp.join(&rel_b)).unwrap(), b"b");
 
         let _ = fs::remove_dir_all(&tmp);
     }

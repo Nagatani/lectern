@@ -291,6 +291,15 @@ async fn pick_image_file(
 }
 
 #[tauri::command]
+fn save_pasted_image(
+    base_dir: String,
+    image_bytes: Vec<u8>,
+    ext: String,
+) -> Result<String, String> {
+    fs_ops::save_pasted_image(Path::new(&base_dir), &image_bytes, &ext)
+}
+
+#[tauri::command]
 fn list_themes(workspace_path: String) -> Vec<ThemeInfo> {
     let ws = if workspace_path.trim().is_empty() {
         None
@@ -660,6 +669,9 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     let open_logs = MenuItemBuilder::with_id("view:open-logs", "アクティビティログを表示...")
         .accelerator("CmdOrCtrl+Shift+L")
         .build(app)?;
+    let open_settings_view = MenuItemBuilder::with_id("app:open-settings", "環境設定...")
+        .accelerator("CmdOrCtrl+,")
+        .build(app)?;
 
     let view_submenu = SubmenuBuilder::new(app, "表示")
         .item(&mode_doc)
@@ -672,6 +684,8 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .item(&toggle_color_scheme)
         .separator()
         .item(&open_logs)
+        .separator()
+        .item(&open_settings_view)
         .build()?;
 
     // 5. ヘルプ メニュー
@@ -694,9 +708,14 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     {
         let check_update_app =
             MenuItemBuilder::with_id("app:check-update", "アップデートを確認...").build(app)?;
+        let open_settings_app = MenuItemBuilder::with_id("app:open-settings", "環境設定...")
+            .accelerator("CmdOrCtrl+,")
+            .build(app)?;
         let app_submenu = SubmenuBuilder::new(app, "Lectern")
             .item(&PredefinedMenuItem::about(app, Some("Lectern について"), None)?)
             .item(&check_update_app)
+            .separator()
+            .item(&open_settings_app)
             .separator()
             .item(&PredefinedMenuItem::hide(app, Some("Lectern を隠す"))?)
             .item(&PredefinedMenuItem::hide_others(app, Some("ほかを隠す"))?)
@@ -787,6 +806,7 @@ pub fn run() {
             reveal_in_file_explorer,
             pick_workspace_folder,
             pick_image_file,
+            save_pasted_image,
             list_workspace_files,
             read_markdown_file,
             save_markdown_file,

@@ -25,6 +25,11 @@ import {
   type ExplorerFileEntry,
   type FileExplorerController,
 } from "./file-explorer";
+import {
+  createSettingsController,
+  handleClipboardImagePaste,
+  type SettingsController,
+} from "./settings-and-paste";
 import { openUserManualModal } from "./user-manual";
 
 // ============================================================================
@@ -163,6 +168,8 @@ const btnUpdaterClose = document.getElementById("btn-updater-close") as HTMLButt
 
 let findReplaceController: FindReplaceController | null = null;
 let fileExplorer: FileExplorerController | null = null;
+let settingsController: SettingsController | null = null;
+let autoSaveTimer: number | null = null;
 let pendingUpdate: Update | null = null;
 
 // ============================================================================
@@ -541,14 +548,38 @@ function updateLineNumbersAndStats(): void {
   findReplaceController?.refreshMatches();
 }
 
+function clearAutoSaveTimer(): void {
+  if (autoSaveTimer !== null) {
+    window.clearTimeout(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
+function scheduleAutoSave(): void {
+  clearAutoSaveTimer();
+  const settings = settingsController?.getSettings();
+  if (!settings?.autoSave || !state.currentFilePath || !state.isDirty) {
+    return;
+  }
+  autoSaveTimer = window.setTimeout(() => {
+    autoSaveTimer = null;
+    const latest = settingsController?.getSettings();
+    if (latest?.autoSave && state.currentFilePath && state.isDirty) {
+      void saveCurrentFile();
+    }
+  }, settings.autoSaveDelayMs);
+}
+
 function markDirty(dirty: boolean): void {
   state.isDirty = dirty;
   if (dirty) {
     elSaveStatusBadge.textContent = "Modified";
     elSaveStatusBadge.className = "status-badge dirty";
+    scheduleAutoSave();
   } else {
     elSaveStatusBadge.textContent = "Saved";
     elSaveStatusBadge.className = "status-badge saved";
+    clearAutoSaveTimer();
   }
 }
 
@@ -1188,6 +1219,30 @@ function bindEvents(): void {
     scheduleCompile();
   });
 
+  elEditor.addEventListener("paste", (ev) => {
+    void handleClipboardImagePaste(ev, {
+      savePastedImage: async (bytes, ext) => {
+        const baseDir = getCurrentBaseDir();
+        if (!baseDir) {
+          throw new Error("保存先のフォルダが開かれていません");
+        }
+        const relPath = await invoke<string>("save_pasted_image", {
+          baseDir,
+          imageBytes: Array.from(bytes),
+          ext,
+        });
+        if (fileExplorer) {
+          void fileExplorer.refresh();
+        }
+        return relPath;
+      },
+      insertText: (text) => {
+        replaceEditorRangeWithUndo(text, elEditor.selectionStart, elEditor.selectionEnd);
+      },
+      onLog: setStatus,
+    });
+  });
+
   elEditor.addEventListener("scroll", () => {
     elLineNumbers.scrollTop = elEditor.scrollTop;
     elEditorHighlight.scrollTop = elEditor.scrollTop;
@@ -1571,6 +1626,9 @@ function setupPaneLayoutAndResizers(): void {
       } else if (e.key === "\\") {
         e.preventDefault();
         togglePreviewVisibility();
+      } else if (e.key === ",") {
+        e.preventDefault();
+        settingsController?.openModal();
       }
     }
   });
@@ -1851,6 +1909,9 @@ async function setupNativeMenuListener(): Promise<void> {
           modalHelp.returnValue = "";
           modalHelp.showModal();
           break;
+        case "app:open-settings":
+          settingsController?.openModal();
+          break;
         case "app:check-update":
           void checkForUpdatesFlow(true);
           break;
@@ -2037,6 +2098,16 @@ async function installPendingUpdate(): Promise<void> {
 }
 
 async function initApp(): Promise<void> {
+  settingsController = createSettingsController({
+    onChange: (settings) => {
+      if (settings.autoSave && state.isDirty && state.currentFilePath) {
+        scheduleAutoSave();
+      } else if (!settings.autoSave) {
+        clearAutoSaveTimer();
+      }
+    },
+    onLog: setStatus,
+  });
   bindEvents();
   fileExplorer = setupFileExplorer();
   btnUpdaterInstall.addEventListener("click", () => void installPendingUpdate());
