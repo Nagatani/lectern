@@ -312,8 +312,14 @@ body {
   color: var(--brand);
 }
 
+.chip-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 .quick-bar-spacer {
   flex: 1;
+  min-width: 8px;
 }
 
 .file-indicator {

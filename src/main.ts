@@ -123,6 +123,7 @@ const elPanePreview = document.getElementById("pane-preview") as HTMLElement;
 
 const btnToggleSidebar = document.getElementById("btn-toggle-sidebar") as HTMLButtonElement;
 const btnTogglePreview = document.getElementById("btn-toggle-preview") as HTMLButtonElement;
+const btnToggleScrollSync = document.getElementById("btn-toggle-scroll-sync") as HTMLButtonElement | null;
 const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButtonElement;
 
 const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
@@ -1426,6 +1427,35 @@ function bindEvents(): void {
   if (btnInsertImage) {
     btnInsertImage.addEventListener("click", () => void insertImageFlow());
   }
+
+  if (btnToggleScrollSync) {
+    btnToggleScrollSync.addEventListener("click", () => {
+      const current = settingsController
+        ? settingsController.getSettings().syncScroll
+        : (editorPreviewSync?.isEnabled() ?? true);
+      const next = !current;
+      if (settingsController) {
+        settingsController.updateSettings({ syncScroll: next });
+      } else {
+        editorPreviewSync?.setEnabled(next);
+        updateScrollSyncToggleUI(next);
+      }
+      if (next) {
+        editorPreviewSync?.syncNow({ smooth: true });
+      }
+      setStatus(`プレビューのスクロール追従を ${next ? "ON" : "OFF"} にしました`);
+    });
+  }
+}
+
+function updateScrollSyncToggleUI(enabled: boolean): void {
+  if (!btnToggleScrollSync) return;
+  btnToggleScrollSync.classList.toggle("active", enabled);
+  btnToggleScrollSync.setAttribute("aria-pressed", String(enabled));
+  btnToggleScrollSync.textContent = enabled ? "🔗 追従同期: ON" : "🔗 追従同期: OFF";
+  btnToggleScrollSync.title = enabled
+    ? "プレビューのスクロール追従: ON（クリックでOFF）"
+    : "プレビューのスクロール追従: OFF（クリックでON）";
 }
 
 async function openFolderFlow(): Promise<void> {
@@ -2119,6 +2149,7 @@ async function initApp(): Promise<void> {
   settingsController = createSettingsController({
     onChange: (settings) => {
       editorPreviewSync?.setEnabled(settings.syncScroll);
+      updateScrollSyncToggleUI(settings.syncScroll);
       if (settings.autoSave && state.isDirty && state.currentFilePath) {
         scheduleAutoSave();
       } else if (!settings.autoSave) {
@@ -2127,6 +2158,7 @@ async function initApp(): Promise<void> {
     },
     onLog: setStatus,
   });
+  updateScrollSyncToggleUI(settingsController.getSettings().syncScroll);
   outlineQuickJump = createOutlineQuickJump({
     getMarkdown: () => elEditor.value,
     getCurrentLine: () => getCursorLineCol(elEditor).line,
