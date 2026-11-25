@@ -394,7 +394,7 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
   color: #2c353d !important;
   overflow-wrap: anywhere;
   border-radius: 4px !important;
-  padding: 0.1em 0.4em !important;
+  padding: 0.3em 0.4em 0.1em !important;
   margin: 0 0.15em;
   font-size: 1em !important;
   line-height: 1.25 !important;
