@@ -32,6 +32,7 @@ pub struct FrontMatter {
     pub description: String,
     pub author: String,
     pub date: String,
+    pub lang: String,
     pub theme: Option<String>,
 }
 
@@ -175,8 +176,10 @@ pub fn compile_lecture_markdown_with_options(
             };
 
             final_html.push_str(&format!(
-                r#"<section class="lecture-slide" data-slide-index="{}"{}>{}{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
+                r#"<section class="lecture-slide" data-slide-index="{}" aria-roledescription="スライド" aria-label="スライド {} / {}"{}>{}{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
                 idx,
+                idx + 1,
+                slide_count,
                 note_attr,
                 title_header,
                 slide_inner,
@@ -231,6 +234,15 @@ fn parse_frontmatter(input: &str) -> (FrontMatter, String) {
                     "description" | "summary" | "abstract" => meta.description = val,
                     "author" => meta.author = val,
                     "date" => meta.date = val,
+                    "lang" | "language" => {
+                        let clean: String = val
+                            .chars()
+                            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                            .collect();
+                        if !clean.is_empty() {
+                            meta.lang = clean;
+                        }
+                    }
                     "theme" => {
                         if !val.is_empty() {
                             meta.theme = Some(val);
@@ -489,18 +501,18 @@ fn preprocess_callouts(markdown: &str) -> String {
         if let Some(after_gt) = trimmed.strip_prefix('>') {
             let tag_line = after_gt.trim();
             let callout_kind = if tag_line.starts_with("[!NOTE]") {
-                Some(("note", "📘 NOTE / 補足"))
+                Some(("note", "📘", "NOTE / 補足"))
             } else if tag_line.starts_with("[!TIP]") {
-                Some(("tip", "💡 TIP / ヒント"))
+                Some(("tip", "💡", "TIP / ヒント"))
             } else if tag_line.starts_with("[!IMPORTANT]") {
-                Some(("important", "🎓 IMPORTANT / 重要・演習"))
+                Some(("important", "🎓", "IMPORTANT / 重要・演習"))
             } else if tag_line.starts_with("[!WARNING]") {
-                Some(("warning", "⚠️ WARNING / 注意"))
+                Some(("warning", "⚠️", "WARNING / 注意"))
             } else {
                 None
             };
 
-            if let Some((kind_cls, label)) = callout_kind {
+            if let Some((kind_cls, icon, label)) = callout_kind {
                 let mut inner_md = String::new();
                 while let Some(&next_line) = lines.peek() {
                     let next_trimmed = next_line.trim_start();
@@ -513,8 +525,8 @@ fn preprocess_callouts(markdown: &str) -> String {
                     }
                 }
                 out.push_str(&format!(
-                    "\n<div class=\"callout callout-{}\"><div class=\"callout-title\">{}</div>\n\n{}\n</div>\n",
-                    kind_cls, label, inner_md
+                    "\n<aside class=\"callout callout-{}\" aria-label=\"{}\"><div class=\"callout-title\"><span aria-hidden=\"true\">{}</span> {}</div>\n\n{}\n</aside>\n",
+                    kind_cls, label, icon, label, inner_md
                 ));
                 continue;
             }
@@ -986,6 +998,61 @@ fn unescape_nested_markdown_fences(code: &str) -> String {
     out
 }
 
+/// Mermaid コード内のアクセシビリティ用タイトル (`accTitle: ...` または `%% title: ...`) を抽出する
+fn extract_mermaid_accessible_label(mermaid_src: &str) -> String {
+    for line in mermaid_src.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("accTitle:") {
+            let title = rest.trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("%%") {
+            let inner = rest.trim();
+            if let Some(title) = inner
+                .strip_prefix("title:")
+                .or_else(|| inner.strip_prefix("Title:"))
+                .or_else(|| inner.strip_prefix("alt:"))
+                .or_else(|| inner.strip_prefix("Alt:"))
+            {
+                let clean = title.trim();
+                if !clean.is_empty() {
+                    return clean.to_string();
+                }
+            }
+        }
+    }
+    "Mermaid図表".to_string()
+}
+
+/// `<thead>` 内の `<th>` に `scope="col"` を自動付与して、スクリーンリーダーの表読み上げを改善する
+fn add_scope_to_table_headers(html: &str) -> String {
+    if !html.contains("<thead>") {
+        return html.to_string();
+    }
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut rest = html;
+    while let Some(head_start) = rest.find("<thead>") {
+        out.push_str(&rest[..head_start]);
+        let after_start = &rest[head_start..];
+        if let Some(head_end_rel) = after_start.find("</thead>") {
+            let thead_block = &after_start[..head_end_rel + "</thead>".len()];
+            let enhanced = thead_block
+                .replace("<th ", r#"<th scope="col" "#)
+                .replace("<th>", r#"<th scope="col">"#);
+            out.push_str(&enhanced);
+            rest = &after_start[head_end_rel + "</thead>".len()..];
+        } else {
+            out.push_str(after_start);
+            rest = "";
+            break;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `pulldown-cmark` + `syntect` で Markdown チャンクを HTML に変換する
 fn render_markdown_chunk(
     markdown: &str,
@@ -1041,9 +1108,10 @@ fn render_markdown_chunk(
                 in_code_block = false;
                 if code_lang.eq_ignore_ascii_case("mermaid") {
                     let encoded = escape_html(&code_buffer);
+                    let aria_label = escape_html(&extract_mermaid_accessible_label(&code_buffer));
                     let html = format!(
-                        r#"<div class="mermaid-container" data-mermaid="{}"><pre class="mermaid">{}</pre></div>"#,
-                        encoded, encoded
+                        r#"<figure class="mermaid-container" role="figure" aria-label="{}" data-mermaid="{}"><pre class="mermaid">{}</pre></figure>"#,
+                        aria_label, encoded, encoded
                     );
                     events.push(Event::Html(html.into()));
                 } else {
@@ -1067,10 +1135,10 @@ fn render_markdown_chunk(
                     } else {
                         code_lang.to_uppercase()
                     };
+                    let escaped_lang = escape_html(&lang_label);
                     let wrapped = format!(
-                        r#"<div class="code-block-wrapper"><div class="code-block-header">{}</div>{}</div>"#,
-                        escape_html(&lang_label),
-                        highlighted
+                        r#"<figure class="code-block-wrapper" role="figure" aria-label="コードブロック ({})"><figcaption class="code-block-header">{}</figcaption>{}</figure>"#,
+                        escaped_lang, escaped_lang, highlighted
                     );
                     events.push(Event::Html(wrapped.into()));
                 }
@@ -1097,9 +1165,9 @@ fn render_markdown_chunk(
             Event::TaskListMarker(checked) => {
                 // HTML上でドキュメントを読みながら直接チェックを入れられるよう disabled を付けない
                 let html = if checked {
-                    r#"<input type="checkbox" class="task-list-checkbox" checked /> "#
+                    r#"<input type="checkbox" class="task-list-checkbox" aria-label="タスクの完了状態" checked /> "#
                 } else {
-                    r#"<input type="checkbox" class="task-list-checkbox" /> "#
+                    r#"<input type="checkbox" class="task-list-checkbox" aria-label="タスクの完了状態" /> "#
                 };
                 events.push(Event::Html(html.into()));
             }
@@ -1109,7 +1177,7 @@ fn render_markdown_chunk(
 
     let mut html_output = String::new();
     pulldown_cmark::html::push_html(&mut html_output, events.into_iter());
-    html_output
+    add_scope_to_table_headers(&html_output)
 }
 
 pub fn escape_html(input: &str) -> String {
@@ -1508,7 +1576,7 @@ pub fn build_standalone_html_with_base_dir(
       <span>📑 目次</span>
       <button type="button" id="doc-toc-close" class="doc-toc-close" aria-label="目次を閉じる">✕</button>
     </div>
-    <nav id="doc-toc-list" class="doc-toc-list"></nav>
+    <nav id="doc-toc-list" class="doc-toc-list" aria-label="目次リンク"></nav>
   </aside>
   <script>
     // ドキュメントモード用オフライン自動目次 (H1–H3, M キー / ボタン開閉, Esc で閉じる)
@@ -1544,7 +1612,10 @@ pub fn build_standalone_html_with_base_dir(
         link.textContent = (heading.textContent || "").trim();
         link.addEventListener("click", function (e) {
           e.preventDefault();
-          heading.scrollIntoView({ behavior: "smooth", block: "start" });
+          const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          heading.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+          heading.setAttribute("tabindex", "-1");
+          heading.focus({ preventScroll: true });
           try {
             history.replaceState(null, "", "#" + heading.id);
           } catch (_) {}
@@ -1600,10 +1671,22 @@ pub fn build_standalone_html_with_base_dir(
     };
 
     let favicon_data_uri = build_embedded_favicon_data_uri(mode);
+    let parsed_lang = parse_frontmatter(markdown).0.lang;
+    let doc_lang = if parsed_lang.is_empty() {
+        "ja"
+    } else {
+        parsed_lang.as_str()
+    };
+    let slide_live_region = if mode == "slide" {
+        r#"
+  <div id="slide-live-region" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>"#
+    } else {
+        ""
+    };
 
     format!(
-        r#"<!doctype html>
-<html lang="ja">
+        r##"<!doctype html>
+<html lang="{doc_lang}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -1614,6 +1697,46 @@ pub fn build_standalone_html_with_base_dir(
   </style>
   <style id="lectern-base-css">
     * {{ box-sizing: border-box; }}
+    .visually-hidden:where(:not(:focus-within, :active)) {{
+      position: absolute !important;
+      clip-path: inset(50%) !important;
+      overflow: hidden !important;
+      width: 1px !important;
+      height: 1px !important;
+      margin: -1px !important;
+      padding: 0 !important;
+      border: 0 !important;
+      white-space: nowrap !important;
+    }}
+    .skip-link:focus-visible {{
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 9999;
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      outline: 3px solid #2563eb;
+      outline-offset: 2px;
+    }}
+    :where(a:any-link, button, summary, [tabindex="-1"]):focus-visible {{
+      outline: 3px solid #2563eb;
+      outline-offset: 2px;
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      html {{ scroll-behavior: auto !important; }}
+      *, *::before, *::after {{
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }}
+    }}
+    @media print {{
+      .skip-link {{ display: none !important; }}
+    }}
     body {{
       margin: 0;
       padding: 0;
@@ -1887,31 +2010,46 @@ pub fn build_standalone_html_with_base_dir(
   </style>
 </head>
 <body class="mode-{mode} theme-{theme_id}" data-lecture-theme="{theme_id}">
-  <article class="lecture-render-root" data-lecture-theme="{theme_id}">
-    {body_content}
-  </article>{doc_toc_markup_and_script}
+  <a href="#main-content" class="skip-link visually-hidden">本文へスキップ</a>
+  <main id="main-content" tabindex="-1">
+    <article class="lecture-render-root" data-lecture-theme="{theme_id}">
+      {body_content}
+    </article>
+  </main>{slide_live_region}{doc_toc_markup_and_script}
   <script>
     // スライドモード時に単体HTMLファイル上でキーボード矢印キー (← / →) でスライド送りできるオフラインスクリプト
     (function () {{
       if (!document.body.classList.contains("mode-slide")) return;
       const slides = Array.from(document.querySelectorAll(".lecture-slide"));
+      const liveRegion = document.getElementById("slide-live-region");
       if (slides.length <= 1) return;
       let current = 0;
+      function announceSlide(idx) {{
+        if (!liveRegion || !slides[idx]) return;
+        const h = slides[idx].querySelector("h1, h2, h3");
+        const headingText = h ? (h.textContent || "").trim() : "";
+        liveRegion.textContent = "スライド " + (idx + 1) + " / " + slides.length + (headingText ? ": " + headingText : "");
+      }}
       window.addEventListener("keydown", function (e) {{
+        const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const behavior = reduceMotion ? "auto" : "smooth";
         if (e.key === "ArrowRight" || e.key === "PageDown") {{
           e.preventDefault();
           current = Math.min(slides.length - 1, current + 1);
-          slides[current].scrollIntoView({{ behavior: "smooth", block: "center" }});
+          slides[current].scrollIntoView({{ behavior: behavior, block: "center" }});
+          announceSlide(current);
         }} else if (e.key === "ArrowLeft" || e.key === "PageUp") {{
           e.preventDefault();
           current = Math.max(0, current - 1);
-          slides[current].scrollIntoView({{ behavior: "smooth", block: "center" }});
+          slides[current].scrollIntoView({{ behavior: behavior, block: "center" }});
+          announceSlide(current);
         }}
       }});
     }})();
   </script>
 </body>
-</html>"#,
+</html>"##,
+        doc_lang = escape_html(doc_lang),
         title = escape_html(title),
         katex_inlined_css = INLINED_KATEX_CSS,
         page_css = page_css,
@@ -3201,6 +3339,10 @@ pub fn build_slideshow_html_with_base_dir(
         current = nextIndex;
         if (!isPresenterMode && inOverview) setOverview(false);
         renderCurrent();
+        const liveRegion = document.getElementById("slide-live-region");
+        if (liveRegion && slideMeta[current]) {
+          liveRegion.textContent = "スライド " + (current + 1) + " / " + slides.length + ": " + slideMeta[current].title;
+        }
         if (shouldBroadcast !== false && changed) {
           broadcastSlide(current);
         }
@@ -3605,7 +3747,7 @@ title: スピーカーノートテスト
         assert_eq!(compiled.slide_count, 2);
         assert!(
             compiled.html.contains(
-                r#"data-slide-index="0" data-speaker-note="重要ポイント: &quot;A &lt; B &amp; C&quot; を口頭補足""#
+                r#"data-slide-index="0" aria-roledescription="スライド" aria-label="スライド 1 / 2" data-speaker-note="重要ポイント: &quot;A &lt; B &amp; C&quot; を口頭補足""#
             ),
             "html={}",
             compiled.html
@@ -3613,7 +3755,9 @@ title: スピーカーノートテスト
         // ノート本文がスライドの可視要素として出力されていないこと
         assert!(!compiled.html.contains("<p>重要ポイント:"));
         // 2枚目はノートなしのため data-speaker-note 属性を付けない
-        assert!(compiled.html.contains(r#"data-slide-index="1">"#));
+        assert!(compiled
+            .html
+            .contains(r#"data-slide-index="1" aria-roledescription="スライド" aria-label="スライド 2 / 2">"#));
     }
 
     #[test]
@@ -3832,6 +3976,61 @@ title: データベース設計
         assert!(doc_html.contains(&expected_doc_tag));
         assert!(slide_html.contains(&expected_slide_tag));
         assert!(slideshow_html.contains(&expected_slide_tag));
+    }
+
+    #[test]
+    fn test_standalone_html_semantic_accessibility_features() {
+        let md = r#"---
+title: アクセシビリティ講義
+lang: en
+---
+
+# 第1章 概要
+
+> [!NOTE]
+> スクリーンリーダー向けの補足です。
+
+| 項目 | 値 |
+| --- | --- |
+| A | 1 |
+
+- [x] 完了タスク
+
+```rust
+fn main() {}
+```
+
+```mermaid
+graph LR
+  accTitle: 処理フロー図
+  A[入力] --> B[出力]
+```
+
+---
+
+# 第2章 詳細
+"#;
+
+        let doc_html = build_standalone_html(md, None, "document", None, None);
+        assert!(doc_html.contains(r#"<html lang="en">"#));
+        assert!(doc_html.contains(r##"<a href="#main-content" class="skip-link visually-hidden">本文へスキップ</a>"##));
+        assert!(doc_html.contains(r#"<main id="main-content" tabindex="-1">"#));
+        assert!(doc_html.contains(r#"<aside class="callout callout-note" aria-label="NOTE / 補足">"#));
+        assert!(doc_html.contains(r#"<span aria-hidden="true">📘</span> NOTE / 補足"#));
+        assert!(doc_html.contains(r#"<th scope="col">項目</th>"#));
+        assert!(doc_html.contains(r#"<th scope="col">値</th>"#));
+        assert!(doc_html.contains(r#"aria-label="タスクの完了状態""#));
+        assert!(doc_html.contains(r#"<figure class="code-block-wrapper" role="figure" aria-label="コードブロック (RUST)">"#));
+        assert!(doc_html.contains(r#"<figcaption class="code-block-header">RUST</figcaption>"#));
+        assert!(doc_html.contains(r#"<figure class="mermaid-container" role="figure" aria-label="処理フロー図""#));
+        assert!(doc_html.contains(r#"aria-label="目次リンク""#));
+        assert!(doc_html.contains("prefers-reduced-motion: reduce"));
+
+        let slide_html = build_standalone_html(md, None, "slide", None, None);
+        assert!(slide_html.contains(r#"aria-roledescription="スライド""#));
+        assert!(slide_html.contains(r#"aria-label="スライド 1 / 2""#));
+        assert!(slide_html.contains(r#"id="slide-live-region""#));
+        assert!(slide_html.contains(r#"aria-live="polite""#));
     }
 
     #[test]
