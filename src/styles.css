@@ -1688,3 +1688,41 @@ dialog::backdrop {
   resize: vertical;
 }
 
+/* Explicit Print Pagebreak Marker (<!-- pagebreak -->) */
+.lecture-page-break {
+  position: relative;
+  margin: 24px 0;
+  border-top: 1.5px dashed var(--border-color);
+  height: 0;
+  text-align: center;
+  user-select: none;
+}
+
+.lecture-page-break::after {
+  content: "ページ区切り";
+  position: relative;
+  top: -0.75em;
+  display: inline-block;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background-color: var(--slide-canvas);
+}
+
+@media print {
+  .lecture-page-break {
+    page-break-before: always;
+    break-before: page;
+    border: none;
+    margin: 0;
+    height: 0;
+  }
+
+  .lecture-page-break::after {
+    display: none;
+  }
+}
+
+

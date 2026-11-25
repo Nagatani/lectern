@@ -128,7 +128,7 @@ pub fn compile_lecture_markdown_with_options(
 ) -> CompileResult {
     let start = Instant::now();
     let (meta, body_md) = parse_frontmatter(markdown);
-    let preprocessed = preprocess_callouts(&body_md);
+    let preprocessed = preprocess_pagebreaks(&preprocess_callouts(&body_md));
 
     let raw_slides = split_slides(&preprocessed);
     let slide_count = raw_slides.len().max(1);
@@ -518,6 +518,45 @@ fn preprocess_callouts(markdown: &str) -> String {
                 ));
                 continue;
             }
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
+}
+
+/// 独立した `<!-- pagebreak -->` または `<!-- page-break -->` (大文字小文字不問) 行かを判定する
+fn is_pagebreak_comment(line: &str) -> bool {
+    let trimmed = line.trim();
+    if let Some(inner) = trimmed
+        .strip_prefix("<!--")
+        .and_then(|s| s.strip_suffix("-->"))
+    {
+        let kw = inner.trim();
+        kw.eq_ignore_ascii_case("pagebreak") || kw.eq_ignore_ascii_case("page-break")
+    } else {
+        false
+    }
+}
+
+/// コードフェンス外の独立した `<!-- pagebreak -->` / `<!-- page-break -->` 行を
+/// 印刷時改ページ用 `<div class="lecture-page-break" aria-hidden="true"></div>` に変換する
+fn preprocess_pagebreaks(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut fence = FenceTracker::default();
+
+    for line in markdown.lines() {
+        if fence.process_line(line) {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if is_pagebreak_comment(line) {
+            out.push_str("\n<div class=\"lecture-page-break\" aria-hidden=\"true\"></div>\n\n");
+            continue;
         }
 
         out.push_str(line);
@@ -1317,6 +1356,235 @@ pub fn build_standalone_html_with_base_dir(
         "#
     };
 
+    let doc_toc_css = if mode == "document" {
+        r#"
+        /* Document Auto-ToC (Collapsible Table of Contents) */
+        .doc-toc-toggle {
+          position: fixed;
+          top: 18px;
+          right: 20px;
+          z-index: 9990;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          background: rgba(15, 23, 42, 0.88);
+          color: #f8fafc;
+          font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.22);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          transition: background-color 0.15s ease, transform 0.15s ease;
+        }
+        .doc-toc-toggle[hidden] {
+          display: none !important;
+        }
+        .doc-toc-toggle:hover {
+          background: rgba(30, 41, 59, 0.96);
+          transform: translateY(-1px);
+        }
+        .doc-toc-toggle.is-open {
+          background: #1d4ed8;
+          border-color: #60a5fa;
+        }
+        .doc-toc-drawer {
+          position: fixed;
+          top: 62px;
+          right: 20px;
+          z-index: 9991;
+          width: min(310px, calc(100vw - 40px));
+          max-height: calc(100vh - 86px);
+          display: flex;
+          flex-direction: column;
+          border-radius: 12px;
+          background: rgba(15, 23, 42, 0.94);
+          color: #f1f5f9;
+          border: 1px solid rgba(148, 163, 184, 0.28);
+          box-shadow: 0 18px 42px rgba(15, 23, 42, 0.36);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+          overflow: hidden;
+        }
+        .doc-toc-drawer[hidden] {
+          display: none !important;
+        }
+        .doc-toc-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 14px;
+          background: rgba(30, 41, 59, 0.8);
+          border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+          font-size: 13px;
+          font-weight: 700;
+          color: #e2e8f0;
+        }
+        .doc-toc-close {
+          border: none;
+          background: transparent;
+          color: #cbd5e1;
+          font-size: 14px;
+          cursor: pointer;
+          padding: 2px 7px;
+          border-radius: 6px;
+        }
+        .doc-toc-close:hover {
+          background: rgba(255, 255, 255, 0.14);
+          color: #ffffff;
+        }
+        .doc-toc-list {
+          overflow-y: auto;
+          padding: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .doc-toc-item {
+          display: block;
+          text-decoration: none;
+          color: #e2e8f0;
+          font-size: 13px;
+          line-height: 1.45;
+          padding: 6px 10px;
+          border-radius: 7px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          transition: background-color 0.12s ease, color 0.12s ease;
+        }
+        .doc-toc-item:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #ffffff;
+        }
+        .doc-toc-item.doc-toc-h1 {
+          font-weight: 700;
+          color: #f8fafc;
+        }
+        .doc-toc-item.doc-toc-h2 {
+          padding-left: 20px;
+          color: #cbd5e1;
+        }
+        .doc-toc-item.doc-toc-h3 {
+          padding-left: 32px;
+          font-size: 12.2px;
+          color: #94a3b8;
+        }
+        @media print {
+          .doc-toc-toggle,
+          .doc-toc-drawer {
+            display: none !important;
+          }
+        }
+        "#
+    } else {
+        ""
+    };
+
+    let doc_toc_markup_and_script = if mode == "document" {
+        r##"
+  <button type="button" id="doc-toc-toggle" class="doc-toc-toggle" hidden aria-expanded="false" aria-controls="doc-toc-drawer" title="目次を開閉 (M)">☰ 目次</button>
+  <aside id="doc-toc-drawer" class="doc-toc-drawer" hidden aria-label="目次">
+    <div class="doc-toc-header">
+      <span>📑 目次</span>
+      <button type="button" id="doc-toc-close" class="doc-toc-close" aria-label="目次を閉じる">✕</button>
+    </div>
+    <nav id="doc-toc-list" class="doc-toc-list"></nav>
+  </aside>
+  <script>
+    // ドキュメントモード用オフライン自動目次 (H1–H3, M キー / ボタン開閉, Esc で閉じる)
+    (function () {
+      const root = document.querySelector(".lecture-render-root");
+      const toggleBtn = document.getElementById("doc-toc-toggle");
+      const drawer = document.getElementById("doc-toc-drawer");
+      const closeBtn = document.getElementById("doc-toc-close");
+      const list = document.getElementById("doc-toc-list");
+      if (!root || !toggleBtn || !drawer || !list) return;
+
+      const headings = Array.from(root.querySelectorAll("h1, h2, h3")).filter(function (el) {
+        return (el.textContent || "").trim().length > 0;
+      });
+      if (headings.length < 2) return;
+
+      let isOpen = false;
+      function setOpen(open) {
+        isOpen = open;
+        drawer.hidden = !open;
+        toggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        toggleBtn.classList.toggle("is-open", open);
+      }
+
+      headings.forEach(function (heading, idx) {
+        if (!heading.id) {
+          heading.id = "doc-heading-" + (idx + 1);
+        }
+        const level = heading.tagName.toLowerCase();
+        const link = document.createElement("a");
+        link.className = "doc-toc-item doc-toc-" + level;
+        link.href = "#" + heading.id;
+        link.textContent = (heading.textContent || "").trim();
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          heading.scrollIntoView({ behavior: "smooth", block: "start" });
+          try {
+            history.replaceState(null, "", "#" + heading.id);
+          } catch (_) {}
+          if (window.innerWidth < 1100) {
+            setOpen(false);
+          }
+        });
+        list.appendChild(link);
+      });
+
+      toggleBtn.hidden = false;
+      toggleBtn.addEventListener("click", function () {
+        setOpen(!isOpen);
+      });
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          setOpen(false);
+        });
+      }
+      document.addEventListener("click", function (e) {
+        if (isOpen && !drawer.contains(e.target) && e.target !== toggleBtn && !toggleBtn.contains(e.target)) {
+          setOpen(false);
+        }
+      });
+      window.addEventListener("keydown", function (e) {
+        const target = e.target;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        if (e.key === "Escape" && isOpen) {
+          e.preventDefault();
+          setOpen(false);
+        } else if (
+          !e.ctrlKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          e.key.toLowerCase() === "m"
+        ) {
+          e.preventDefault();
+          setOpen(!isOpen);
+        }
+      });
+    })();
+  </script>"##
+    } else {
+        ""
+    };
+
     format!(
         r#"<!doctype html>
 <html lang="ja">
@@ -1558,7 +1826,44 @@ pub fn build_standalone_html_with_base_dir(
       font-size: 12px;
       color: #64748b;
     }}
+    .lecture-page-break {{
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 24px 0;
+      height: 1px;
+      border: 0;
+      border-top: 1.5px dashed #cbd5e1;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      user-select: none;
+    }}
+    .lecture-page-break::after {{
+      content: "ページ区切り";
+      background: #ffffff;
+      padding: 0 10px;
+      border-radius: 999px;
+    }}
+    @media print {{
+      .lecture-page-break {{
+        page-break-after: always;
+        break-after: page;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        overflow: hidden;
+      }}
+      .lecture-page-break::after {{
+        display: none;
+        content: none;
+      }}
+    }}
     {page_css}
+    {doc_toc_css}
   </style>
   <style id="lectern-theme-css">
 {custom_theme_style}
@@ -1567,7 +1872,7 @@ pub fn build_standalone_html_with_base_dir(
 <body class="mode-{mode} theme-{theme_id}" data-lecture-theme="{theme_id}">
   <article class="lecture-render-root" data-lecture-theme="{theme_id}">
     {body_content}
-  </article>
+  </article>{doc_toc_markup_and_script}
   <script>
     // スライドモード時に単体HTMLファイル上でキーボード矢印キー (← / →) でスライド送りできるオフラインスクリプト
     (function () {{
@@ -1593,10 +1898,12 @@ pub fn build_standalone_html_with_base_dir(
         title = escape_html(title),
         katex_inlined_css = INLINED_KATEX_CSS,
         page_css = page_css,
+        doc_toc_css = doc_toc_css,
         custom_theme_style = custom_theme_style,
         mode = escape_html(mode),
         theme_id = escape_html(effective_theme_id),
-        body_content = body_content
+        body_content = body_content,
+        doc_toc_markup_and_script = doc_toc_markup_and_script
     )
 }
 
@@ -2153,6 +2460,248 @@ pub fn build_slideshow_html_with_base_dir(
       transition: width 0.2s ease;
     }
 
+    /* 2-Window Synchronized Presenter Dashboard (?presenter=1) */
+    body.mode-slideshow.is-presenter-mode {
+      overflow: hidden;
+      background: #090d16 !important;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    }
+    body.mode-slideshow.is-presenter-mode > .lecture-render-root,
+    body.mode-slideshow.is-presenter-mode .slideshow-hud,
+    body.mode-slideshow.is-presenter-mode .slideshow-edge-nav,
+    body.mode-slideshow.is-presenter-mode .slideshow-notes-drawer,
+    body.mode-slideshow.is-presenter-mode .slideshow-toc-menu,
+    body.mode-slideshow.is-presenter-mode .slideshow-progress {
+      display: none !important;
+    }
+    .presenter-dashboard {
+      position: fixed;
+      inset: 0;
+      z-index: 9995;
+      display: flex;
+      flex-direction: column;
+      background: #090d16;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    }
+    .presenter-dashboard[hidden] {
+      display: none !important;
+    }
+    .presenter-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 18px;
+      background: #0f172a;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .presenter-topbar-left,
+    .presenter-topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .presenter-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.18);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: #7dd3fc;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .presenter-counter {
+      font-variant-numeric: tabular-nums;
+      font-size: 14px;
+      font-weight: 700;
+      color: #e2e8f0;
+      min-width: 64px;
+      text-align: center;
+    }
+    .presenter-btn {
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      background: #1e293b;
+      color: #f8fafc;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.14s ease, border-color 0.14s ease;
+    }
+    .presenter-btn:hover:not(:disabled) {
+      background: #334155;
+      border-color: #60a5fa;
+    }
+    .presenter-btn:disabled {
+      opacity: 0.38;
+      cursor: default;
+    }
+    .presenter-btn.is-running {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(52, 211, 153, 0.55);
+      color: #6ee7b7;
+    }
+    .presenter-timer-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: 10px;
+      background: #111827;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+    }
+    .presenter-timer-value {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 18px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: #38bdf8;
+      letter-spacing: 0.03em;
+    }
+    .presenter-clock {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 14px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: #cbd5e1;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: #111827;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    .presenter-main {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1.38fr) minmax(0, 1fr);
+      gap: 16px;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .presenter-right-col {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+    .presenter-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-radius: 12px;
+      background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      overflow: hidden;
+    }
+    .presenter-panel-next {
+      flex: 0 0 46%;
+    }
+    .presenter-panel-notes {
+      flex: 1;
+    }
+    .presenter-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: rgba(30, 41, 59, 0.8);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+    }
+    .presenter-panel-subtitle {
+      color: #e2e8f0;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 70%;
+    }
+    .presenter-stage {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #020617;
+      padding: 12px;
+      overflow: hidden;
+    }
+    .presenter-stage-frame {
+      position: relative;
+      width: 1120px;
+      height: 630px;
+      overflow: hidden;
+      border-radius: 8px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+      transform-origin: center center;
+      flex-shrink: 0;
+    }
+    .presenter-stage-root {
+      position: static !important;
+      width: 1120px !important;
+      height: 630px !important;
+      padding: 0 !important;
+      margin: 0 !important;
+      display: block !important;
+      background: transparent !important;
+    }
+    .presenter-stage-root .lecture-slide {
+      display: flex !important;
+      transform: none !important;
+      animation: none !important;
+      width: 1120px !important;
+      height: 630px !important;
+      margin: 0 !important;
+      border-radius: 8px !important;
+      box-shadow: none !important;
+      pointer-events: none;
+    }
+    .presenter-last-slide-msg {
+      color: #94a3b8;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .presenter-notes-body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px 18px;
+      font-size: 18px;
+      line-height: 1.75;
+      color: #f8fafc;
+      white-space: pre-wrap;
+    }
+    .presenter-notes-body.is-empty {
+      color: #94a3b8;
+      font-style: italic;
+      font-size: 15px;
+    }
+    @media (max-width: 900px) {
+      .presenter-main {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+      }
+      .presenter-panel-next {
+        flex: 0 0 42%;
+      }
+    }
+
     @media print {
       html, body.mode-slideshow {
         width: auto;
@@ -2188,7 +2737,8 @@ pub fn build_slideshow_html_with_base_dir(
       .slideshow-edge-nav,
       .slideshow-notes-drawer,
       .slideshow-toc-menu,
-      .slideshow-help-overlay {
+      .slideshow-help-overlay,
+      .presenter-dashboard {
         display: none !important;
       }
     }
@@ -2228,12 +2778,56 @@ pub fn build_slideshow_html_with_base_dir(
         <li><span>スライド一覧（オーバービュー）</span><span class="slideshow-help-keys"><kbd>O</kbd><kbd>G</kbd></span></li>
         <li><span>目次・スライドジャンプ</span><span class="slideshow-help-keys"><kbd>T</kbd></span></li>
         <li><span>スピーカーノート表示切替</span><span class="slideshow-help-keys"><kbd>N</kbd></span></li>
+        <li><span>発表者ビューを開く</span><span class="slideshow-help-keys"><kbd>P</kbd></span></li>
         <li><span>全画面表示切替</span><span class="slideshow-help-keys"><kbd>F</kbd></span></li>
         <li><span>ショートカットヘルプ</span><span class="slideshow-help-keys"><kbd>?</kbd></span></li>
         <li><span>オーバーレイ・一覧を閉じる</span><span class="slideshow-help-keys"><kbd>Esc</kbd></span></li>
       </ul>
     </div>
   </div>
+
+  <section id="ss-presenter-dashboard" class="presenter-dashboard" hidden aria-label="発表者ビュー">
+    <header class="presenter-topbar">
+      <div class="presenter-topbar-left">
+        <span class="presenter-badge">🎙 発表者ビュー</span>
+        <button type="button" id="presenter-prev" class="presenter-btn" title="前のスライド (←)">◀ 前へ</button>
+        <span id="presenter-counter" class="presenter-counter">1 / 1</span>
+        <button type="button" id="presenter-next" class="presenter-btn" title="次のスライド (→)">次へ ▶</button>
+      </div>
+      <div class="presenter-topbar-right">
+        <div class="presenter-timer-group" aria-label="経過タイマー">
+          <span id="presenter-timer" class="presenter-timer-value">00:00:00</span>
+          <button type="button" id="presenter-timer-toggle" class="presenter-btn">▶ 開始</button>
+          <button type="button" id="presenter-timer-reset" class="presenter-btn">↺ リセット</button>
+        </div>
+        <span id="presenter-clock" class="presenter-clock" aria-label="現在時刻">--:--:--</span>
+      </div>
+    </header>
+    <div class="presenter-main">
+      <section class="presenter-panel presenter-panel-current" aria-label="現在のスライド">
+        <div class="presenter-panel-header">
+          <span>現在のスライド</span>
+          <span id="presenter-current-title" class="presenter-panel-subtitle"></span>
+        </div>
+        <div id="presenter-current-stage" class="presenter-stage"></div>
+      </section>
+      <div class="presenter-right-col">
+        <section class="presenter-panel presenter-panel-next" aria-label="次のスライド">
+          <div class="presenter-panel-header">
+            <span>次のスライド</span>
+            <span id="presenter-next-title" class="presenter-panel-subtitle"></span>
+          </div>
+          <div id="presenter-next-stage" class="presenter-stage"></div>
+        </section>
+        <section class="presenter-panel presenter-panel-notes" aria-label="スピーカーノート">
+          <div class="presenter-panel-header">
+            <span>🗒 スピーカーノート</span>
+          </div>
+          <div id="presenter-notes-body" class="presenter-notes-body"></div>
+        </section>
+      </div>
+    </div>
+  </section>
 
   <div class="slideshow-hud" role="toolbar" aria-label="スライドショー操作">
     <button type="button" id="ss-prev" title="前のスライド (← / PageUp)">◀</button>
@@ -2242,6 +2836,7 @@ pub fn build_slideshow_html_with_base_dir(
     <span class="hud-sep" aria-hidden="true"></span>
     <button type="button" id="ss-overview" title="スライド一覧グリッド (O / G)">⊞ 一覧</button>
     <button type="button" id="ss-notes-toggle" title="スピーカーノート (N)">🗒 ノート<span id="ss-notes-dot" class="hud-note-dot" hidden></span></button>
+    <button type="button" id="ss-presenter-toggle" title="発表者ビューを開く (P)">🎙 発表者</button>
     <button type="button" id="ss-fullscreen" title="全画面表示切替 (F)">⛶ 全画面</button>
     <button type="button" id="ss-help-toggle" title="ショートカット一覧 (?)">?</button>
   </div>
@@ -2261,10 +2856,25 @@ pub fn build_slideshow_html_with_base_dir(
       const btnOverview = document.getElementById("ss-overview");
       const btnNotes = document.getElementById("ss-notes-toggle");
       const elNotesDot = document.getElementById("ss-notes-dot");
+      const btnPresenter = document.getElementById("ss-presenter-toggle");
       const btnFullscreen = document.getElementById("ss-fullscreen");
       const btnHelp = document.getElementById("ss-help-toggle");
       const elCounter = document.getElementById("ss-counter");
       const elProgress = document.getElementById("ss-progress-fill");
+
+      const presenterDashboard = document.getElementById("ss-presenter-dashboard");
+      const btnPresenterPrev = document.getElementById("presenter-prev");
+      const btnPresenterNext = document.getElementById("presenter-next");
+      const elPresenterCounter = document.getElementById("presenter-counter");
+      const elPresenterCurrentTitle = document.getElementById("presenter-current-title");
+      const elPresenterNextTitle = document.getElementById("presenter-next-title");
+      const elPresenterCurrentStage = document.getElementById("presenter-current-stage");
+      const elPresenterNextStage = document.getElementById("presenter-next-stage");
+      const elPresenterNotesBody = document.getElementById("presenter-notes-body");
+      const elPresenterTimer = document.getElementById("presenter-timer");
+      const btnPresenterTimerToggle = document.getElementById("presenter-timer-toggle");
+      const btnPresenterTimerReset = document.getElementById("presenter-timer-reset");
+      const elPresenterClock = document.getElementById("presenter-clock");
 
       const notesDrawer = document.getElementById("ss-notes-drawer");
       const notesBody = document.getElementById("ss-notes-body");
@@ -2277,6 +2887,18 @@ pub fn build_slideshow_html_with_base_dir(
 
       const helpOverlay = document.getElementById("ss-help-overlay");
       const btnHelpClose = document.getElementById("ss-help-close");
+
+      const isPresenterMode = new URLSearchParams(window.location.search).get("presenter") === "1";
+      const SYNC_CHANNEL_NAME = "lectern-slideshow-sync";
+      const SYNC_STORAGE_KEY = "lectern-slideshow-sync-state";
+      const senderId = Math.random().toString(36).slice(2) + "-" + Date.now();
+      let syncChannel = null;
+      try {
+        if (typeof BroadcastChannel !== "undefined") {
+          syncChannel = new BroadcastChannel(SYNC_CHANNEL_NAME);
+        }
+      } catch (_) {}
+      let presenterWindow = null;
 
       let current = 0;
       let inOverview = false;
@@ -2408,7 +3030,133 @@ pub fn build_slideshow_html_with_base_dir(
         }
       }
 
+      function broadcastSync(payload) {
+        if (syncChannel) {
+          try { syncChannel.postMessage(payload); } catch (_) {}
+        }
+        try {
+          localStorage.setItem(SYNC_STORAGE_KEY, JSON.stringify(payload));
+        } catch (_) {}
+        try {
+          if (presenterWindow && !presenterWindow.closed) {
+            presenterWindow.postMessage(payload, "*");
+          }
+        } catch (_) {}
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(payload, "*");
+          }
+        } catch (_) {}
+      }
+
+      function broadcastSlide(index) {
+        broadcastSync({
+          type: "slide-change",
+          index: index,
+          total: slides.length,
+          sender: senderId,
+          ts: Date.now()
+        });
+      }
+
+      function openPresenterWindow() {
+        if (isPresenterMode) return;
+        let targetUrl = "";
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("presenter", "1");
+          url.hash = "#" + (current + 1);
+          targetUrl = url.toString();
+        } catch (_) {
+          const base = window.location.href.split("#")[0].split("?")[0];
+          targetUrl = base + "?presenter=1#" + (current + 1);
+        }
+        presenterWindow = window.open(
+          targetUrl,
+          "lectern-presenter-view",
+          "width=1280,height=800,resizable=yes,scrollbars=yes"
+        );
+        if (presenterWindow) {
+          try { presenterWindow.focus(); } catch (_) {}
+        }
+      }
+
+      function scalePresenterStage(stageEl) {
+        if (!stageEl) return;
+        const frame = stageEl.querySelector(".presenter-stage-frame");
+        if (!frame) return;
+        const w = Math.max(120, stageEl.clientWidth - 24);
+        const h = Math.max(80, stageEl.clientHeight - 24);
+        const scale = Math.max(0.12, Math.min(w / 1120, h / 630));
+        frame.style.transform = "scale(" + scale.toFixed(4) + ")";
+      }
+
+      function scalePresenterStages() {
+        scalePresenterStage(elPresenterCurrentStage);
+        scalePresenterStage(elPresenterNextStage);
+      }
+
+      function renderPresenterStage(stageEl, slideIdx) {
+        if (!stageEl) return;
+        stageEl.innerHTML = "";
+        if (slideIdx < 0 || slideIdx >= slides.length) {
+          const msg = document.createElement("div");
+          msg.className = "presenter-last-slide-msg";
+          msg.textContent = "最終スライド";
+          stageEl.appendChild(msg);
+          return;
+        }
+        const frame = document.createElement("div");
+        frame.className = "presenter-stage-frame";
+        const stageRoot = document.createElement("div");
+        stageRoot.className = "lecture-render-root presenter-stage-root";
+        const themeAttr = root.getAttribute("data-lecture-theme");
+        if (themeAttr) stageRoot.setAttribute("data-lecture-theme", themeAttr);
+        const clone = slides[slideIdx].cloneNode(true);
+        clone.classList.add("is-active");
+        stageRoot.appendChild(clone);
+        frame.appendChild(stageRoot);
+        stageEl.appendChild(frame);
+        scalePresenterStage(stageEl);
+      }
+
+      function renderPresenterView() {
+        if (elPresenterCounter) {
+          elPresenterCounter.textContent = (current + 1) + " / " + slides.length;
+        }
+        const atFirst = current <= 0;
+        const atLast = current >= slides.length - 1;
+        if (btnPresenterPrev) btnPresenterPrev.disabled = atFirst;
+        if (btnPresenterNext) btnPresenterNext.disabled = atLast;
+        if (elPresenterCurrentTitle) {
+          elPresenterCurrentTitle.textContent = (current + 1) + ". " + slideMeta[current].title;
+        }
+        if (elPresenterNextTitle) {
+          elPresenterNextTitle.textContent = atLast
+            ? "最終スライド"
+            : (current + 2) + ". " + slideMeta[current + 1].title;
+        }
+        renderPresenterStage(elPresenterCurrentStage, current);
+        renderPresenterStage(elPresenterNextStage, atLast ? -1 : current + 1);
+        if (elPresenterNotesBody) {
+          const note = getSlideNote(slides[current]);
+          const hasNote = note.length > 0;
+          elPresenterNotesBody.textContent = hasNote
+            ? note
+            : "このスライドにはスピーカーノートがありません。";
+          elPresenterNotesBody.classList.toggle("is-empty", !hasNote);
+        }
+        const targetHash = "#" + (current + 1);
+        if (window.location.hash !== targetHash) {
+          try { history.replaceState(null, "", targetHash); } catch (_) {}
+        }
+      }
+
       function renderCurrent() {
+        if (isPresenterMode) {
+          renderPresenterView();
+          return;
+        }
         slides.forEach((s, idx) => {
           s.classList.toggle("is-active", idx === current);
         });
@@ -2430,11 +3178,38 @@ pub fn build_slideshow_html_with_base_dir(
         }
       }
 
-      function goTo(index) {
-        current = Math.max(0, Math.min(slides.length - 1, index));
-        if (inOverview) setOverview(false);
+      function goTo(index, shouldBroadcast) {
+        const nextIndex = Math.max(0, Math.min(slides.length - 1, index));
+        const changed = nextIndex !== current;
+        current = nextIndex;
+        if (!isPresenterMode && inOverview) setOverview(false);
         renderCurrent();
+        if (shouldBroadcast !== false && changed) {
+          broadcastSlide(current);
+        }
       }
+
+      function handleSyncMessage(data) {
+        if (!data || typeof data !== "object" || data.sender === senderId) return;
+        if (data.type === "slide-change" && typeof data.index === "number") {
+          goTo(data.index, false);
+        } else if (data.type === "sync-request" && !isPresenterMode) {
+          broadcastSlide(current);
+        }
+      }
+
+      if (syncChannel) {
+        syncChannel.onmessage = (event) => handleSyncMessage(event.data);
+      }
+      window.addEventListener("storage", (event) => {
+        if (event.key !== SYNC_STORAGE_KEY || !event.newValue) return;
+        try {
+          handleSyncMessage(JSON.parse(event.newValue));
+        } catch (_) {}
+      });
+      window.addEventListener("message", (event) => {
+        handleSyncMessage(event.data);
+      });
 
       function setOverview(enable) {
         if (inOverview === enable) return;
@@ -2518,11 +3293,88 @@ pub fn build_slideshow_html_with_base_dir(
       btnOverview?.addEventListener("click", () => setOverview(!inOverview));
       btnNotes?.addEventListener("click", () => setNotes(!notesOpen));
       btnNotesClose?.addEventListener("click", () => setNotes(false));
+      btnPresenter?.addEventListener("click", openPresenterWindow);
       elCounter?.addEventListener("click", () => setToc(!tocOpen));
       btnTocClose?.addEventListener("click", () => setToc(false));
       btnFullscreen?.addEventListener("click", toggleFullscreen);
       btnHelp?.addEventListener("click", () => setHelp(!helpOpen));
       btnHelpClose?.addEventListener("click", () => setHelp(false));
+
+      btnPresenterPrev?.addEventListener("click", () => goTo(current - 1));
+      btnPresenterNext?.addEventListener("click", () => goTo(current + 1));
+
+      // Lecture Elapsed Timer & Current Clock (Presenter Mode)
+      let timerRunning = false;
+      let timerElapsedMs = 0;
+      let timerStartedAt = 0;
+      let timerInterval = null;
+
+      function formatElapsed(ms) {
+        const totalSec = Math.max(0, Math.floor(ms / 1000));
+        const hrs = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+        const mins = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+        const secs = String(totalSec % 60).padStart(2, "0");
+        return hrs + ":" + mins + ":" + secs;
+      }
+
+      function updateTimerDisplay() {
+        if (!elPresenterTimer) return;
+        const elapsed = timerRunning
+          ? timerElapsedMs + (Date.now() - timerStartedAt)
+          : timerElapsedMs;
+        elPresenterTimer.textContent = formatElapsed(elapsed);
+      }
+
+      function toggleTimer() {
+        if (timerRunning) {
+          timerElapsedMs += Date.now() - timerStartedAt;
+          timerRunning = false;
+          if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+          }
+          if (btnPresenterTimerToggle) {
+            btnPresenterTimerToggle.textContent = "▶ 開始";
+            btnPresenterTimerToggle.classList.remove("is-running");
+          }
+        } else {
+          timerStartedAt = Date.now();
+          timerRunning = true;
+          timerInterval = setInterval(updateTimerDisplay, 250);
+          if (btnPresenterTimerToggle) {
+            btnPresenterTimerToggle.textContent = "⏸ 一時停止";
+            btnPresenterTimerToggle.classList.add("is-running");
+          }
+        }
+        updateTimerDisplay();
+      }
+
+      function resetTimer() {
+        timerRunning = false;
+        timerElapsedMs = 0;
+        timerStartedAt = 0;
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+        if (btnPresenterTimerToggle) {
+          btnPresenterTimerToggle.textContent = "▶ 開始";
+          btnPresenterTimerToggle.classList.remove("is-running");
+        }
+        updateTimerDisplay();
+      }
+
+      function updateClockDisplay() {
+        if (!elPresenterClock) return;
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        const ss = String(now.getSeconds()).padStart(2, "0");
+        elPresenterClock.textContent = hh + ":" + mm + ":" + ss;
+      }
+
+      btnPresenterTimerToggle?.addEventListener("click", toggleTimer);
+      btnPresenterTimerReset?.addEventListener("click", resetTimer);
 
       helpOverlay?.addEventListener("click", (e) => {
         if (e.target === helpOverlay) setHelp(false);
@@ -2549,7 +3401,7 @@ pub fn build_slideshow_html_with_base_dir(
           target &&
           (target.tagName === "A" || target.tagName === "BUTTON" || target.tagName === "SUMMARY");
 
-        wakeHud();
+        if (!isPresenterMode) wakeHud();
 
         if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
           e.preventDefault();
@@ -2592,16 +3444,19 @@ pub fn build_slideshow_html_with_base_dir(
         } else if (e.key === "End") {
           e.preventDefault();
           goTo(slides.length - 1);
-        } else if (e.key.toLowerCase() === "o" || e.key.toLowerCase() === "g") {
+        } else if (!isPresenterMode && (e.key.toLowerCase() === "o" || e.key.toLowerCase() === "g")) {
           e.preventDefault();
           setOverview(!inOverview);
-        } else if (e.key.toLowerCase() === "t") {
+        } else if (!isPresenterMode && e.key.toLowerCase() === "t") {
           e.preventDefault();
           setToc(!tocOpen);
-        } else if (e.key.toLowerCase() === "n") {
+        } else if (!isPresenterMode && e.key.toLowerCase() === "n") {
           e.preventDefault();
           setNotes(!notesOpen);
-        } else if (e.key.toLowerCase() === "f") {
+        } else if (!isPresenterMode && e.key.toLowerCase() === "p" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          openPresenterWindow();
+        } else if (!isPresenterMode && e.key.toLowerCase() === "f") {
           e.preventDefault();
           toggleFullscreen();
         }
@@ -2613,7 +3468,7 @@ pub fn build_slideshow_html_with_base_dir(
         if (e.touches.length === 1) touchStartX = e.touches[0].clientX;
       }, { passive: true });
       window.addEventListener("touchend", (e) => {
-        if (touchStartX === null || inOverview || tocOpen || helpOpen) return;
+        if (touchStartX === null || inOverview || tocOpen || helpOpen || isPresenterMode) return;
         const dx = e.changedTouches[0].clientX - touchStartX;
         touchStartX = null;
         if (Math.abs(dx) > 48) {
@@ -2621,8 +3476,16 @@ pub fn build_slideshow_html_with_base_dir(
         }
       }, { passive: true });
 
-      window.addEventListener("mousemove", wakeHud, { passive: true });
-      window.addEventListener("resize", updateScale);
+      window.addEventListener("mousemove", () => {
+        if (!isPresenterMode) wakeHud();
+      }, { passive: true });
+      window.addEventListener("resize", () => {
+        if (isPresenterMode) {
+          scalePresenterStages();
+        } else {
+          updateScale();
+        }
+      });
       document.addEventListener("fullscreenchange", updateScale);
       window.addEventListener("hashchange", () => {
         current = parseHashIndex();
@@ -2630,9 +3493,21 @@ pub fn build_slideshow_html_with_base_dir(
       });
 
       current = parseHashIndex();
-      updateScale();
-      renderCurrent();
-      wakeHud();
+      if (isPresenterMode) {
+        document.body.classList.add("is-presenter-mode");
+        if (presenterDashboard) presenterDashboard.hidden = false;
+        document.title = "[発表者ビュー] " + document.title;
+        updateTimerDisplay();
+        updateClockDisplay();
+        setInterval(updateClockDisplay, 1000);
+        renderCurrent();
+        requestAnimationFrame(scalePresenterStages);
+        broadcastSync({ type: "sync-request", sender: senderId, ts: Date.now() });
+      } else {
+        updateScale();
+        renderCurrent();
+        wakeHud();
+      }
     })();
   </script>
 </body>"##;
@@ -2821,6 +3696,134 @@ flowchart LR
         assert!(html.contains("data:font/woff2;base64,"));
         assert!(!html.contains("https://cdn."));
         assert!(!html.contains("http://cdn."));
+        assert!(!html.contains("<script src="));
+        assert!(!html.contains(r#"<link rel="stylesheet""#));
+    }
+
+    #[test]
+    fn test_pagebreak_conversion_and_code_fence_preservation() {
+        let md = r#"# 第1章
+
+最初のページの内容です。
+
+<!-- pagebreak -->
+
+# 第2章
+
+<!-- PAGE-BREAK -->
+
+```markdown
+<!-- pagebreak -->
+<!-- page-break -->
+```
+
+~~~html
+<!-- PAGEBREAK -->
+~~~
+
+最後の段落です。
+"#;
+
+        let compiled = compile_lecture_markdown(md, "document");
+        let break_div = r#"<div class="lecture-page-break" aria-hidden="true"></div>"#;
+        // コードフェンス外の2か所のみ変換される
+        assert_eq!(compiled.html.matches(break_div).count(), 2);
+        // コードフェンス内はそのまま保持される（HTMLエスケープされた形でコードブロック内に存在）
+        assert!(compiled.html.contains("pagebreak"));
+        assert!(compiled.html.contains("PAGEBREAK"));
+
+        // スタンドアロン HTML にスクリーン用ラベルと印刷用改ページ CSS が含まれる
+        let standalone = build_standalone_html(md, None, "document", None, None);
+        assert!(standalone.contains(".lecture-page-break"));
+        assert!(standalone.contains("ページ区切り"));
+        assert!(standalone.contains("page-break-after: always;"));
+        assert!(standalone.contains("break-after: page;"));
+    }
+
+    #[test]
+    fn test_document_auto_toc_markup_script_and_slide_mode_exclusion() {
+        let md = r#"---
+title: データベース設計
+---
+
+# 第1章 概要
+
+## 1.1 正規化
+
+### 1.1.1 第1正規形
+
+# 第2章 インデックス
+"#;
+
+        let doc_html = build_standalone_html(md, None, "document", None, None);
+        assert!(doc_html.contains(r#"id="doc-toc-toggle""#));
+        assert!(doc_html.contains("☰ 目次"));
+        assert!(doc_html.contains(r#"id="doc-toc-drawer""#));
+        assert!(doc_html.contains(r#"id="doc-toc-list""#));
+        assert!(doc_html.contains(r#"querySelectorAll("h1, h2, h3")"#));
+        assert!(doc_html.contains("headings.length < 2"));
+        assert!(doc_html.contains(r#"e.key === "Escape""#));
+        assert!(doc_html.contains(r#"e.key.toLowerCase() === "m""#));
+        assert!(doc_html.contains("scrollIntoView"));
+        assert!(doc_html.contains(".doc-toc-toggle,\n          .doc-toc-drawer"));
+        assert!(!doc_html.contains("<script src="));
+        assert!(!doc_html.contains("https://cdn."));
+
+        // slide モードではドキュメント用自動目次を注入しない
+        let slide_html = build_standalone_html(md, None, "slide", None, None);
+        assert!(!slide_html.contains(r#"id="doc-toc-toggle""#));
+        assert!(!slide_html.contains(r#"id="doc-toc-drawer""#));
+    }
+
+    #[test]
+    fn test_slideshow_presenter_view_sync_timer_and_offline() {
+        let md = r#"---
+title: 発表者ビューテスト
+---
+
+# スライド1
+
+内容1
+
+<!-- note: ここではタイマーを確認しながら3分で話す -->
+
+---
+
+# スライド2
+
+内容2
+"#;
+
+        let html = build_slideshow_html_with_base_dir(md, None, Some("handout"), None, None);
+
+        // HUD ボタン & ショートカットヘルプ
+        assert!(html.contains(r#"id="ss-presenter-toggle""#));
+        assert!(html.contains("🎙 発表者"));
+        assert!(html.contains("<kbd>P</kbd>"));
+
+        // ?presenter=1 モード & 2ウィンドウ同期 (BroadcastChannel + localStorage フォールバック)
+        assert!(html.contains("?presenter=1"));
+        assert!(html.contains("BroadcastChannel"));
+        assert!(html.contains("lectern-slideshow-sync"));
+        assert!(html.contains("localStorage"));
+        assert!(html.contains(r#"addEventListener("storage""#));
+
+        // 発表者ダッシュボード要素（現在スライド・次スライド・ノート・タイマー・時計・前後操作）
+        assert!(html.contains(r#"id="ss-presenter-dashboard""#));
+        assert!(html.contains(r#"id="presenter-current-stage""#));
+        assert!(html.contains(r#"id="presenter-next-stage""#));
+        assert!(html.contains("最終スライド"));
+        assert!(html.contains(r#"id="presenter-notes-body""#));
+        assert!(html.contains(r#"id="presenter-timer""#));
+        assert!(html.contains("00:00:00"));
+        assert!(html.contains(r#"id="presenter-timer-toggle""#));
+        assert!(html.contains(r#"id="presenter-timer-reset""#));
+        assert!(html.contains(r#"id="presenter-clock""#));
+        assert!(html.contains(r#"id="presenter-prev""#));
+        assert!(html.contains(r#"id="presenter-next""#));
+
+        // 100% オフライン
+        assert!(!html.contains("https://cdn."));
         assert!(!html.contains("<script src="));
         assert!(!html.contains(r#"<link rel="stylesheet""#));
     }
