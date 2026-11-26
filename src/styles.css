@@ -281,11 +281,36 @@ body {
 .quick-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
   padding: 0 14px;
   background-color: var(--bg-elevated);
   border-bottom: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.quick-bar-inserts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+}
+
+.quick-bar-inserts::-webkit-scrollbar {
+  display: none;
+}
+
+.quick-bar-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-color);
 }
 
 .quick-bar-label {

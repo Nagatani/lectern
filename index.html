@@ -76,26 +76,32 @@
       </header>
 
       <!-- Quick Insert Bar for Lecture Authoring -->
-      <div class="quick-bar" role="toolbar" aria-label="マークダウン挿入ツールバー">
-        <span class="quick-bar-label">挿入:</span>
-        <button type="button" class="chip-btn" data-insert="slide-break" title="スライド区切り (---) を挿入">＋ スライド区切り</button>
-        <button type="button" class="chip-btn" data-insert="math-block" title="ディスプレイ数式 ($$ ... $$) を挿入">∑ 数式ブロック</button>
-        <button type="button" class="chip-btn" data-insert="math-inline" title="インライン数式 ($ ... $) を挿入">$ インライン数式</button>
-        <button type="button" class="chip-btn" data-insert="code-rust" title="シンタックスハイライト付きコードブロックを挿入">🦀 コードブロック</button>
-        <button type="button" class="chip-btn" data-insert="mermaid" title="Mermaid フローチャート図を挿入">📊 Mermaid図表</button>
-        <button type="button" id="btn-insert-image" class="chip-btn" title="画像ファイル (PNG/JPEG等) を選択して挿入 (Base64自動埋め込み)">🖼️ 画像挿入</button>
-        <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
-        <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
-        <div class="quick-bar-spacer" aria-hidden="true"></div>
-        <button
-          type="button"
-          id="btn-toggle-scroll-sync"
-          class="chip-btn chip-toggle active"
-          aria-pressed="true"
-          title="プレビューのスクロール追従: ON（クリックでOFF）"
-        >
-          🔗 追従同期: ON
-        </button>
+      <div class="quick-bar" role="toolbar" aria-label="マークダウン挿入・操作ツールバー">
+        <div class="quick-bar-inserts">
+          <span class="quick-bar-label">挿入:</span>
+          <button type="button" class="chip-btn" data-insert="slide-break" title="スライド区切り (---) を挿入">＋ スライド区切り</button>
+          <button type="button" class="chip-btn" data-insert="math-block" title="ディスプレイ数式 ($$ ... $$) を挿入">∑ 数式ブロック</button>
+          <button type="button" class="chip-btn" data-insert="math-inline" title="インライン数式 ($ ... $) を挿入">$ インライン数式</button>
+          <button type="button" class="chip-btn" data-insert="code-rust" title="シンタックスハイライト付きコードブロックを挿入">🦀 コードブロック</button>
+          <button type="button" class="chip-btn" data-insert="mermaid" title="Mermaid フローチャート図を挿入">📊 Mermaid図表</button>
+          <button type="button" id="btn-insert-image" class="chip-btn" title="画像ファイル (PNG/JPEG等) を選択して挿入 (Base64自動埋め込み)">🖼️ 画像挿入</button>
+          <button type="button" class="chip-btn" data-insert="callout" title="講義のポイント・演習枠を挿入">💡 ポイント/演習枠</button>
+          <button type="button" class="chip-btn" data-insert="two-column" title="2段組レイアウトを挿入">◫ 2カラム</button>
+        </div>
+        <div class="quick-bar-tools" role="group" aria-label="エディタ操作ツール">
+          <button type="button" id="btn-quick-find" class="chip-btn" title="検索・置換を開く (Cmd+F / Ctrl+F)">🔍 検索</button>
+          <button type="button" id="btn-quick-outline" class="chip-btn" title="見出しアウトラインへジャンプ (Cmd+Shift+O / Ctrl+Shift+O)">📑 見出し</button>
+          <button
+            type="button"
+            id="btn-toggle-scroll-sync"
+            class="chip-btn chip-toggle active"
+            aria-pressed="true"
+            title="プレビューのスクロール追従: ON（クリックでOFF）"
+          >
+            🔗 追従同期: ON
+          </button>
+          <button type="button" id="btn-quick-settings" class="chip-btn" aria-label="環境設定を開く" title="環境設定を開く (Cmd+, / Ctrl+,)">⚙️</button>
+        </div>
       </div>
 
       <!-- Main 3-Pane Workspace (Resizable Split Panes) -->

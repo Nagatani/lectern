@@ -1769,6 +1769,16 @@ function bindEvents(): void {
     btnInsertImage.addEventListener("click", () => void insertImageFlow());
   }
 
+  document.getElementById("btn-quick-find")?.addEventListener("click", () => {
+    findReplaceController?.openFind(false);
+  });
+  document.getElementById("btn-quick-outline")?.addEventListener("click", () => {
+    outlineQuickJump?.open();
+  });
+  document.getElementById("btn-quick-settings")?.addEventListener("click", () => {
+    settingsController?.openModal();
+  });
+
   if (btnToggleScrollSync) {
     btnToggleScrollSync.addEventListener("click", () => {
       const current = settingsController
