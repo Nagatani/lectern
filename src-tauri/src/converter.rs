@@ -33,6 +33,7 @@ pub struct FrontMatter {
     pub author: String,
     pub date: String,
     pub lang: String,
+    pub toc: bool,
     pub theme: Option<String>,
 }
 
@@ -242,6 +243,12 @@ fn parse_frontmatter(input: &str) -> (FrontMatter, String) {
                         if !clean.is_empty() {
                             meta.lang = clean;
                         }
+                    }
+                    "toc" => {
+                        meta.toc = matches!(
+                            val.to_ascii_lowercase().as_str(),
+                            "true" | "yes" | "on" | "1"
+                        );
                     }
                     "theme" => {
                         if !val.is_empty() {
@@ -1438,9 +1445,26 @@ pub fn build_standalone_html_with_base_dir(
         "#
     };
 
-    let doc_toc_css = if mode == "document" {
+    let frontmatter = parse_frontmatter(markdown).0;
+    let enable_doc_toc = mode == "document" && frontmatter.toc;
+
+    let doc_toc_css = if enable_doc_toc {
         r#"
-        /* Document Auto-ToC (Collapsible Table of Contents) */
+        /* Document Auto-ToC (Frontmatter `toc: true` opt-in, theme-aware via --doc-toc-* custom properties) */
+        body {
+          --doc-toc-bg: rgba(255, 255, 255, 0.96);
+          --doc-toc-header-bg: #f8fafc;
+          --doc-toc-border: #cbd5e1;
+          --doc-toc-text: #1e293b;
+          --doc-toc-text-h1: #0f172a;
+          --doc-toc-text-muted: #64748b;
+          --doc-toc-hover-bg: #eff6ff;
+          --doc-toc-hover-text: #1d4ed8;
+          --doc-toc-accent: #2563eb;
+          --doc-toc-accent-text: #ffffff;
+          --doc-toc-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+          --doc-toc-font: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+        }
         .doc-toc-toggle {
           position: fixed;
           top: 18px;
@@ -1449,30 +1473,33 @@ pub fn build_standalone_html_with_base_dir(
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          padding: 8px 14px;
+          padding: 7px 14px;
           border-radius: 999px;
-          border: 1px solid rgba(148, 163, 184, 0.35);
-          background: rgba(15, 23, 42, 0.88);
-          color: #f8fafc;
-          font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
-          font-size: 13px;
+          border: 1px solid var(--doc-toc-border);
+          background: var(--doc-toc-bg);
+          color: var(--doc-toc-text);
+          font-family: var(--doc-toc-font);
+          font-size: 0.85rem;
           font-weight: 600;
           cursor: pointer;
-          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.22);
+          box-shadow: var(--doc-toc-shadow);
           backdrop-filter: blur(8px);
           -webkit-backdrop-filter: blur(8px);
-          transition: background-color 0.15s ease, transform 0.15s ease;
+          transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
         }
         .doc-toc-toggle[hidden] {
           display: none !important;
         }
         .doc-toc-toggle:hover {
-          background: rgba(30, 41, 59, 0.96);
+          background: var(--doc-toc-hover-bg);
+          border-color: var(--doc-toc-accent);
+          color: var(--doc-toc-hover-text);
           transform: translateY(-1px);
         }
         .doc-toc-toggle.is-open {
-          background: #1d4ed8;
-          border-color: #60a5fa;
+          background: var(--doc-toc-accent);
+          border-color: var(--doc-toc-accent);
+          color: var(--doc-toc-accent-text);
         }
         .doc-toc-drawer {
           position: fixed;
@@ -1483,14 +1510,14 @@ pub fn build_standalone_html_with_base_dir(
           max-height: calc(100vh - 86px);
           display: flex;
           flex-direction: column;
-          border-radius: 12px;
-          background: rgba(15, 23, 42, 0.94);
-          color: #f1f5f9;
-          border: 1px solid rgba(148, 163, 184, 0.28);
-          box-shadow: 0 18px 42px rgba(15, 23, 42, 0.36);
+          border-radius: 10px;
+          background: var(--doc-toc-bg);
+          color: var(--doc-toc-text);
+          border: 1px solid var(--doc-toc-border);
+          box-shadow: var(--doc-toc-shadow);
           backdrop-filter: blur(12px);
           -webkit-backdrop-filter: blur(12px);
-          font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+          font-family: var(--doc-toc-font);
           overflow: hidden;
         }
         .doc-toc-drawer[hidden] {
@@ -1501,24 +1528,24 @@ pub fn build_standalone_html_with_base_dir(
           align-items: center;
           justify-content: space-between;
           padding: 10px 14px;
-          background: rgba(30, 41, 59, 0.8);
-          border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-          font-size: 13px;
+          background: var(--doc-toc-header-bg);
+          border-bottom: 1px solid var(--doc-toc-border);
+          font-size: 0.85rem;
           font-weight: 700;
-          color: #e2e8f0;
+          color: var(--doc-toc-text-h1);
         }
         .doc-toc-close {
           border: none;
           background: transparent;
-          color: #cbd5e1;
-          font-size: 14px;
+          color: var(--doc-toc-text-muted);
+          font-size: 0.9rem;
           cursor: pointer;
           padding: 2px 7px;
           border-radius: 6px;
         }
         .doc-toc-close:hover {
-          background: rgba(255, 255, 255, 0.14);
-          color: #ffffff;
+          background: var(--doc-toc-hover-bg);
+          color: var(--doc-toc-hover-text);
         }
         .doc-toc-list {
           overflow-y: auto;
@@ -1530,32 +1557,32 @@ pub fn build_standalone_html_with_base_dir(
         .doc-toc-item {
           display: block;
           text-decoration: none;
-          color: #e2e8f0;
-          font-size: 13px;
-          line-height: 1.45;
+          color: var(--doc-toc-text);
+          font-size: 0.85rem;
+          line-height: 1.5;
           padding: 6px 10px;
-          border-radius: 7px;
+          border-radius: 6px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
           transition: background-color 0.12s ease, color 0.12s ease;
         }
         .doc-toc-item:hover {
-          background: rgba(255, 255, 255, 0.1);
-          color: #ffffff;
+          background: var(--doc-toc-hover-bg);
+          color: var(--doc-toc-hover-text);
         }
         .doc-toc-item.doc-toc-h1 {
           font-weight: 700;
-          color: #f8fafc;
+          color: var(--doc-toc-text-h1);
         }
         .doc-toc-item.doc-toc-h2 {
           padding-left: 20px;
-          color: #cbd5e1;
+          color: var(--doc-toc-text);
         }
         .doc-toc-item.doc-toc-h3 {
           padding-left: 32px;
-          font-size: 12.2px;
-          color: #94a3b8;
+          font-size: 0.8rem;
+          color: var(--doc-toc-text-muted);
         }
         @media print {
           .doc-toc-toggle,
@@ -1568,7 +1595,7 @@ pub fn build_standalone_html_with_base_dir(
         ""
     };
 
-    let doc_toc_markup_and_script = if mode == "document" {
+    let doc_toc_markup_and_script = if enable_doc_toc {
         r##"
   <button type="button" id="doc-toc-toggle" class="doc-toc-toggle" hidden aria-expanded="false" aria-controls="doc-toc-drawer" title="目次を開閉 (M)">☰ 目次</button>
   <aside id="doc-toc-drawer" class="doc-toc-drawer" hidden aria-label="目次">
@@ -1671,11 +1698,10 @@ pub fn build_standalone_html_with_base_dir(
     };
 
     let favicon_data_uri = build_embedded_favicon_data_uri(mode);
-    let parsed_lang = parse_frontmatter(markdown).0.lang;
-    let doc_lang = if parsed_lang.is_empty() {
+    let doc_lang = if frontmatter.lang.is_empty() {
         "ja"
     } else {
-        parsed_lang.as_str()
+        frontmatter.lang.as_str()
     };
     let slide_live_region = if mode == "slide" {
         r#"
@@ -3905,11 +3931,31 @@ flowchart LR
 
     #[test]
     fn test_document_auto_toc_markup_script_and_slide_mode_exclusion() {
-        let md = r#"---
-title: データベース設計
+        // デフォルト（toc 未指定）では自動目次を出力しない
+        let md_default = r#"---
+title: 自動目次デフォルトなしテスト
 ---
 
-# 第1章 概要
+# 第1章 基礎
+
+# 第2章 応用
+"#;
+        let default_html = build_standalone_html(md_default, None, "document", None, None);
+        assert!(!default_html.contains(r#"id="doc-toc-toggle""#));
+        assert!(!default_html.contains(r#"id="doc-toc-drawer""#));
+
+        // toc: false を明示した場合も出力しない
+        let md_false = "---\ntitle: 目次OFF\ntoc: false\n---\n# A\n# B\n";
+        let false_html = build_standalone_html(md_false, None, "document", None, None);
+        assert!(!false_html.contains(r#"id="doc-toc-toggle""#));
+
+        // toc: true 指定時のみドキュメントモードで自動目次を出力する
+        let md = r#"---
+title: 自動目次テスト
+toc: true
+---
+
+# 第1章 データベース設計
 
 ## 1.1 正規化
 
@@ -3923,6 +3969,7 @@ title: データベース設計
         assert!(doc_html.contains("☰ 目次"));
         assert!(doc_html.contains(r#"id="doc-toc-drawer""#));
         assert!(doc_html.contains(r#"id="doc-toc-list""#));
+        assert!(doc_html.contains("var(--doc-toc-bg)"));
         assert!(doc_html.contains(r#"querySelectorAll("h1, h2, h3")"#));
         assert!(doc_html.contains("headings.length < 2"));
         assert!(doc_html.contains(r#"e.key === "Escape""#));
@@ -3932,7 +3979,7 @@ title: データベース設計
         assert!(!doc_html.contains("<script src="));
         assert!(!doc_html.contains("https://cdn."));
 
-        // slide モードではドキュメント用自動目次を注入しない
+        // slide モードでは toc: true でもドキュメント用自動目次を注入しない
         let slide_html = build_standalone_html(md, None, "slide", None, None);
         assert!(!slide_html.contains(r#"id="doc-toc-toggle""#));
         assert!(!slide_html.contains(r#"id="doc-toc-drawer""#));
@@ -3985,6 +4032,7 @@ title: データベース設計
         let md = r#"---
 title: アクセシビリティ講義
 lang: en
+toc: true
 ---
 
 # 第1章 概要

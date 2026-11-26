@@ -626,6 +626,21 @@ body.mode-document .lecture-render-root[data-lecture-theme="handout"],
 .lecture-render-root[data-lecture-theme="handout"] .lecture-slide hr {
   margin: 0.9rem 0 !important;
 }
+/* Document Auto-ToC palette for Handout */
+body.theme-handout {
+  --doc-toc-bg: rgba(255, 255, 255, 0.96);
+  --doc-toc-header-bg: #f2f3f5;
+  --doc-toc-border: #d4d7dd;
+  --doc-toc-text: #222222;
+  --doc-toc-text-h1: #171717;
+  --doc-toc-text-muted: #555555;
+  --doc-toc-hover-bg: #f1f3f6;
+  --doc-toc-hover-text: #2c4a70;
+  --doc-toc-accent: #2c4a70;
+  --doc-toc-accent-text: #ffffff;
+  --doc-toc-shadow: 0 8px 24px rgba(0, 0, 0, 0.09);
+  --doc-toc-font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", YuGothic, "ヒラギノ角ゴ ProN W3", "Hiragino Kaku Gothic ProN", sans-serif;
+}
 @media print {
   .lecture-render-root[data-lecture-theme="handout"] .lecture-slide {
     background-color: #ffffff !important;
@@ -728,6 +743,20 @@ pub const THEME_DEFAULT_CSS: &str = r#"/* Theme: Modern (モダン・サンセ�
   margin: 0.45rem auto;
 }
 .lecture-render-root .lecture-slide .callout { margin: 0.55rem 0; padding: 0.65rem 1rem; font-size: 0.92rem; }
+/* Document Auto-ToC palette for Modern (default) */
+body.theme-default {
+  --doc-toc-bg: rgba(255, 255, 255, 0.96);
+  --doc-toc-header-bg: #f8fafc;
+  --doc-toc-border: #d7e0ec;
+  --doc-toc-text: #17202a;
+  --doc-toc-text-h1: #0f172a;
+  --doc-toc-text-muted: #64748b;
+  --doc-toc-hover-bg: #eff6ff;
+  --doc-toc-hover-text: #1d4ed8;
+  --doc-toc-accent: #2563eb;
+  --doc-toc-accent-text: #ffffff;
+  --doc-toc-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
 @media print {
   .lecture-render-root .lecture-slide {
     background-color: #ffffff !important;
@@ -885,6 +914,21 @@ pub const THEME_ACADEMIC_CSS: &str = r#"/* Theme: Academic (論文・モノグ�
   margin: 0.45rem auto;
 }
 .lecture-render-root .lecture-slide .callout { margin: 0.55rem 0; padding: 0.65rem 1rem; font-size: 0.92rem; }
+/* Document Auto-ToC palette for Academic */
+body.theme-academic {
+  --doc-toc-bg: rgba(252, 251, 247, 0.97);
+  --doc-toc-header-bg: #f5f2eb;
+  --doc-toc-border: #d6d3cd;
+  --doc-toc-text: #1c1917;
+  --doc-toc-text-h1: #431407;
+  --doc-toc-text-muted: #57534e;
+  --doc-toc-hover-bg: #f5f2eb;
+  --doc-toc-hover-text: #7c2d12;
+  --doc-toc-accent: #7c2d12;
+  --doc-toc-accent-text: #fcfbf7;
+  --doc-toc-shadow: 0 8px 24px rgba(28, 25, 23, 0.12);
+  --doc-toc-font: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Times New Roman", Georgia, serif;
+}
 @media print {
   .lecture-render-root .lecture-slide {
     background-color: #fcfbf7 !important;
@@ -1038,6 +1082,20 @@ pub const THEME_CHALKBOARD_CSS: &str = r#"/* Theme: Chalkboard (黒板・チョ�
   margin: 0.45rem auto;
 }
 .lecture-render-root .lecture-slide .callout { margin: 0.55rem 0; padding: 0.65rem 1rem; font-size: 0.92rem; }
+/* Document Auto-ToC palette for Chalkboard */
+body.theme-chalkboard {
+  --doc-toc-bg: rgba(23, 53, 40, 0.96);
+  --doc-toc-header-bg: #11281e;
+  --doc-toc-border: rgba(255, 255, 255, 0.28);
+  --doc-toc-text: #f3f6f4;
+  --doc-toc-text-h1: #fef08a;
+  --doc-toc-text-muted: #cbd5e1;
+  --doc-toc-hover-bg: rgba(255, 255, 255, 0.12);
+  --doc-toc-hover-text: #fef08a;
+  --doc-toc-accent: #fef08a;
+  --doc-toc-accent-text: #173528;
+  --doc-toc-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
 @media print {
   .lecture-render-root .lecture-slide {
     background-color: #173528 !important;
@@ -1191,6 +1249,20 @@ pub const THEME_MIDNIGHT_CSS: &str = r#"/* Theme: Midnight (ダーク・プロ�
   margin: 0.45rem auto;
 }
 .lecture-render-root .lecture-slide .callout { margin: 0.55rem 0; padding: 0.65rem 1rem; font-size: 0.92rem; }
+/* Document Auto-ToC palette for Midnight */
+body.theme-midnight {
+  --doc-toc-bg: rgba(15, 23, 42, 0.95);
+  --doc-toc-header-bg: #1e293b;
+  --doc-toc-border: #334155;
+  --doc-toc-text: #e2e8f0;
+  --doc-toc-text-h1: #38bdf8;
+  --doc-toc-text-muted: #94a3b8;
+  --doc-toc-hover-bg: rgba(56, 189, 248, 0.14);
+  --doc-toc-hover-text: #38bdf8;
+  --doc-toc-accent: #0284c7;
+  --doc-toc-accent-text: #f8fafc;
+  --doc-toc-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+}
 @media print {
   .lecture-render-root .lecture-slide {
     background-color: #0f172a !important;
