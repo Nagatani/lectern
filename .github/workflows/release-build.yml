@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -45,6 +47,46 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # タグごとのアップデート内容を自動生成（タグ注釈に <!-- release-notes:start --> がある場合は優先し、なければ直前タグからのコミット履歴を集計）
+      - name: Generate per-tag release notes
+        id: release_notes
+        shell: bash
+        run: |
+          CURRENT_TAG="${GITHUB_REF_NAME}"
+          NOTES=""
+
+          # 1. タグ注釈メッセージ内に <!-- release-notes:start --> ... <!-- release-notes:end --> があればそれを優先使用
+          TAG_MSG="$(git tag -l --format='%(contents)' "$CURRENT_TAG" 2>/dev/null || true)"
+          if echo "$TAG_MSG" | grep -qi "release-notes:start"; then
+            NOTES="$(printf '%s\n' "$TAG_MSG" | awk '
+              BEGIN { capture = 0 }
+              tolower($0) ~ /<!-- *release-notes:start *-->/ { capture = 1; next }
+              tolower($0) ~ /<!-- *release-notes:end *-->/ { capture = 0; next }
+              capture { print }
+            ')"
+          fi
+
+          # 2. 注釈に明示ノートが無い場合は、直前の v* タグから現在タグまでのコミット一覧を自動生成
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -vxF "$CURRENT_TAG" | head -n 1 || true)"
+            if [ -n "$PREV_TAG" ]; then
+              LOG_RANGE="${PREV_TAG}..HEAD"
+            else
+              LOG_RANGE="HEAD"
+            fi
+            NOTES="$(git log "$LOG_RANGE" --no-merges --pretty=format:'- %s' | grep -vE '^- chore\(release\):' || true)"
+          fi
+
+          if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            NOTES="- 軽微な改善およびメンテナンス更新"
+          fi
+
+          {
+            echo "notes<<EOF_RELEASE_NOTES"
+            printf '%s\n' "$NOTES"
+            echo "EOF_RELEASE_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
       # 1. Build Tauri bundles (.app, .dmg, setup.exe, .msi) + Updater artifacts (latest.json, .sig)
       # タグ push 時 (v*) は tauri-action が自動で GitHub Release を作成し、
       # TAURI_SIGNING_PRIVATE_KEY が設定されていればセルフアップデート用の latest.json と署名済みアーカイブも公開します
@@ -59,7 +101,11 @@ jobs:
           releaseName: "Lectern ${{ github.ref_name }}"
           releaseBody: |
             ## Lectern ${{ github.ref_name }}
-            Rust + Tauri 製の講義資料マークダウンエディタ & HTML/PDF 変換ツールです。
+
+            ### アップデート内容
+            <!-- release-notes:start -->
+            ${{ steps.release_notes.outputs.notes }}
+            <!-- release-notes:end -->
 
             ### ダウンロードファイル一覧
             - **macOS (Apple Silicon)**:

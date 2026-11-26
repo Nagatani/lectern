@@ -42,6 +42,7 @@ import {
   handleClipboardImagePaste,
   type SettingsController,
 } from "./settings-and-paste";
+import { extractUpdaterNotes } from "./updater-notes";
 import { openUserManualModal } from "./user-manual";
 
 // ============================================================================
@@ -2462,8 +2463,9 @@ async function checkForUpdatesFlow(manual: boolean): Promise<void> {
       pendingUpdate = update;
       elUpdaterTitle.textContent = `🎉 新しいバージョン v${update.version} が利用可能です`;
       elUpdaterMessage.textContent = `現在のバージョン v${update.currentVersion} から v${update.version} へアップデートできます。`;
-      if (update.body && update.body.trim()) {
-        elUpdaterNotes.textContent = update.body.trim();
+      const extractedNotes = extractUpdaterNotes(update.body);
+      if (extractedNotes) {
+        elUpdaterNotes.textContent = extractedNotes;
         elUpdaterNotes.hidden = false;
       } else {
         elUpdaterNotes.hidden = true;

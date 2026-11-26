@@ -33,15 +33,28 @@ const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
 const noPush = args.includes("--no-push");
 const allowDirty = args.includes("--allow-dirty");
-const positional = args.filter((a) => !a.startsWith("--"));
+
+let customNotes = "";
+const positional = [];
+for (let i = 0; i < args.length; i += 1) {
+  const a = args[i];
+  if (a === "--notes" && i + 1 < args.length) {
+    customNotes = args[i + 1];
+    i += 1;
+  } else if (a.startsWith("--notes=")) {
+    customNotes = a.slice("--notes=".length);
+  } else if (!a.startsWith("--")) {
+    positional.push(a);
+  }
+}
 
 function usage() {
   console.log(`使い方:
-  npm run release -- <patch | minor | major | X.Y.Z> [--dry-run] [--no-push] [--allow-dirty]
+  npm run release -- <patch | minor | major | X.Y.Z> [--notes "変更内容"] [--dry-run] [--no-push] [--allow-dirty]
 
 例:
   npm run release -- patch
-  npm run release -- minor
+  npm run release -- minor --notes "- タブ機能を追加\n- 目次をテーマ連動に改善"
   npm run release -- 0.3.0
   npm run release -- patch --dry-run`);
 }
@@ -181,7 +194,46 @@ if (fs.existsSync(cargoLockPath)) {
   });
 }
 
+function collectReleaseNotes(overrideNotes) {
+  if (overrideNotes && overrideNotes.trim()) {
+    return overrideNotes.replace(/\\n/g, "\n").trim();
+  }
+  const prevTag = (
+    runGit(["tag", "-l", "v*", "--sort=-v:refname"], { capture: true, allowFail: true }) || ""
+  )
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
+
+  const range = prevTag ? `${prevTag}..HEAD` : "HEAD";
+  const rawLog = (
+    runGit(["log", range, "--no-merges", "--pretty=format:- %s"], {
+      capture: true,
+      allowFail: true,
+    }) || ""
+  )
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("- chore(release):"));
+
+  if (rawLog.length === 0) {
+    return "- 軽微な改善およびメンテナンス更新";
+  }
+  return rawLog.join("\n");
+}
+
 const relPaths = filesToUpdate.map((f) => path.relative(ROOT, f.path));
+const releaseNotesBody = collectReleaseNotes(customNotes);
+const tagMessage = [
+  `Lectern ${tagName}`,
+  "",
+  "<!-- release-notes:start -->",
+  releaseNotesBody,
+  "<!-- release-notes:end -->",
+].join("\n");
+
+console.log("\n📝 アップデート内容 (タグ注釈 / ダイアログ表示対象):");
+console.log(releaseNotesBody);
 
 if (dryRun) {
   console.log("\n[DRY RUN] 更新予定のファイル:");
@@ -191,7 +243,7 @@ if (dryRun) {
   console.log(`[DRY RUN] 実行予定のコマンド:`);
   console.log(`  - git add ${relPaths.join(" ")}`);
   console.log(`  - git commit -m "chore(release): ${tagName}"`);
-  console.log(`  - git tag -a ${tagName} -m "Lectern ${tagName}"`);
+  console.log(`  - git tag -a ${tagName} -m "<リリースノート付きタグ注釈>"`);
   if (!noPush) {
     console.log(`  - git push origin HEAD`);
     console.log(`  - git push origin ${tagName}`);
@@ -206,11 +258,11 @@ for (const file of filesToUpdate) {
   console.log(`  ✓ 更新: ${path.relative(ROOT, file.path)}`);
 }
 
-// 5. Git コミット & タグ作成
+// 5. Git コミット & タグ作成（タグ注釈にアップデート内容を記録）
 runGit(["add", ...relPaths]);
 runGit(["commit", "-m", `chore(release): ${tagName}`]);
-runGit(["tag", "-a", tagName, "-m", `Lectern ${tagName}`]);
-console.log(`\n✓ コミットおよびタグ ${tagName} を作成しました。`);
+runGit(["tag", "-a", tagName, "-m", tagMessage]);
+console.log(`\n✓ コミットおよびリリースノート付きタグ ${tagName} を作成しました。`);
 
 // 6. リモートへ push（GitHub Actions のビルド & リリース自動発火）
 if (!noPush) {
