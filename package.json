@@ -1,7 +1,7 @@
 {
   "name": "lectern",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Lectern — Rust & Tauri Lecture Material Editor and HTML/PDF Converter",
   "type": "module",
   "scripts": {
