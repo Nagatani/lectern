@@ -357,8 +357,21 @@ body {
 .status-badge {
   font-size: 11px;
   font-weight: 700;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter 0.12s ease, border-color 0.12s ease;
+}
+
+.status-badge:hover {
+  filter: brightness(0.95);
+}
+
+.status-badge:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .status-badge.saved {
@@ -369,6 +382,27 @@ body {
 .status-badge.dirty {
   background-color: rgba(245, 158, 11, 0.18);
   color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.status-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.status-btn:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.status-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
 }
 
 .pane-toggle-group {

@@ -34,7 +34,14 @@
           </div>
           <div class="active-file-meta">
             <span id="current-file-indicator" class="file-indicator">未選択</span>
-            <span id="save-status-badge" class="status-badge saved">Saved</span>
+            <button
+              type="button"
+              id="save-status-badge"
+              class="status-badge saved"
+              title="保存済み（クリックで上書き保存 Cmd+S / Ctrl+S）"
+            >
+              Saved
+            </button>
           </div>
         </div>
 
@@ -217,14 +224,28 @@
         </section>
       </main>
 
-      <!-- Footer Status Bar (Essential Live Metrics Only) -->
+      <!-- Footer Status Bar (Essential Live Metrics & Quick Actions) -->
       <footer class="statusbar">
         <div class="status-left">
-          <span id="editor-cursor-pos">行 1, 列 1</span>
+          <button
+            type="button"
+            id="editor-cursor-pos"
+            class="status-btn"
+            title="クリックして指定行へジャンプ (Cmd+G / Ctrl+G)"
+          >
+            行 1, 列 1
+          </button>
           <span id="editor-stats">0 行 · 0 文字</span>
         </div>
         <div class="status-right">
-          <span id="active-theme-indicator">Theme: handout</span>
+          <button
+            type="button"
+            id="active-theme-indicator"
+            class="status-btn"
+            title="クリックしてテーマ CSS を編集"
+          >
+            Theme: handout
+          </button>
           <span id="compile-time">レンダリング: —</span>
         </div>
       </footer>

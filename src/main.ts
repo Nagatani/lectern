@@ -111,7 +111,7 @@ const elEditor = document.getElementById("markdown-editor") as HTMLTextAreaEleme
 const elEditorTabsBar = document.getElementById("editor-tabs-bar") as HTMLDivElement;
 const elEditorHighlight = document.getElementById("editor-highlight") as HTMLPreElement;
 const elLineNumbers = document.getElementById("line-numbers") as HTMLDivElement;
-const elEditorCursorPos = document.getElementById("editor-cursor-pos") as HTMLSpanElement;
+const elEditorCursorPos = document.getElementById("editor-cursor-pos") as HTMLElement;
 const elEditorStats = document.getElementById("editor-stats") as HTMLSpanElement;
 const elPreviewViewport = document.getElementById("preview-viewport") as HTMLDivElement;
 const elPreviewContent = document.getElementById("preview-content") as HTMLElement;
@@ -119,8 +119,8 @@ const elCompileTime = document.getElementById("compile-time") as HTMLSpanElement
 const elFileTree = document.getElementById("file-tree") as HTMLUListElement;
 const elWorkspacePathLabel = document.getElementById("workspace-path-label") as HTMLDivElement;
 const elCurrentFileIndicator = document.getElementById("current-file-indicator") as HTMLSpanElement;
-const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLSpanElement;
-const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLSpanElement;
+const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLButtonElement;
+const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLElement;
 const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HTMLStyleElement;
 
 const elWorkspaceGrid = document.getElementById("workspace-grid") as HTMLElement;
@@ -768,10 +768,12 @@ function markDirty(dirty: boolean): void {
     editorTabBar?.updateActiveSnapshot({ content: elEditor.value });
     elSaveStatusBadge.textContent = "Modified";
     elSaveStatusBadge.className = "status-badge dirty";
+    elSaveStatusBadge.title = "未保存の変更があります（クリックで保存 Cmd+S / Ctrl+S）";
     scheduleAutoSave();
   } else {
     elSaveStatusBadge.textContent = "Saved";
     elSaveStatusBadge.className = "status-badge saved";
+    elSaveStatusBadge.title = "保存済み（クリックで上書き保存 Cmd+S / Ctrl+S）";
     clearAutoSaveTimer();
   }
   editorTabBar?.setTabDirty(dirty);
@@ -1777,6 +1779,16 @@ function bindEvents(): void {
   });
   document.getElementById("btn-quick-settings")?.addEventListener("click", () => {
     settingsController?.openModal();
+  });
+
+  elSaveStatusBadge.addEventListener("click", () => {
+    void saveCurrentFile();
+  });
+  elEditorCursorPos.addEventListener("click", () => {
+    void gotoLineFlow();
+  });
+  elActiveThemeIndicator.addEventListener("click", () => {
+    openCustomThemeEditorModal();
   });
 
   if (btnToggleScrollSync) {
