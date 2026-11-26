@@ -133,6 +133,7 @@ const btnToggleSidebar = document.getElementById("btn-toggle-sidebar") as HTMLBu
 const btnTogglePreview = document.getElementById("btn-toggle-preview") as HTMLButtonElement;
 const btnToggleScrollSync = document.getElementById("btn-toggle-scroll-sync") as HTMLButtonElement | null;
 const btnCloseSidebar = document.getElementById("btn-close-sidebar") as HTMLButtonElement;
+const btnClosePreview = document.getElementById("btn-close-preview") as HTMLButtonElement | null;
 
 const btnParentDir = document.getElementById("btn-parent-dir") as HTMLButtonElement;
 const btnRevealExplorer = document.getElementById("btn-reveal-explorer") as HTMLButtonElement;
@@ -1998,6 +1999,7 @@ function setupPaneLayoutAndResizers(): void {
   btnCloseSidebar.addEventListener("click", () => toggleSidebarVisibility(false));
 
   btnTogglePreview.addEventListener("click", () => togglePreviewVisibility());
+  btnClosePreview?.addEventListener("click", () => togglePreviewVisibility(false));
 
   // Global keyboard shortcuts:
   // Cmd/Ctrl + B (Sidebar), Cmd/Ctrl + \ (Preview), Cmd/Ctrl + , (Settings),

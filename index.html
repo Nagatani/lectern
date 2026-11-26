@@ -20,6 +20,15 @@
       <!-- Top Header / Toolbar (Decluttered: File/Export/History/Theme-Edit/Help live in native menu bar) -->
       <header class="toolbar">
         <div class="toolbar-left">
+          <button
+            type="button"
+            id="btn-toggle-sidebar"
+            class="chip-btn chip-toggle active"
+            aria-pressed="true"
+            title="ファイルエクスプローラーの表示/非表示 (Cmd+B / Ctrl+B)"
+          >
+            ◧ ファイル
+          </button>
           <div class="brand">
             <h1 class="brand-title">Lectern</h1>
           </div>
@@ -54,26 +63,15 @@
             <option value="handout">🎨 Handout (講義レジュメ・明朝)</option>
           </select>
 
-          <div class="pane-toggle-group" role="group" aria-label="パネル表示切替">
-            <button
-              type="button"
-              id="btn-toggle-sidebar"
-              class="chip-btn chip-toggle active"
-              aria-pressed="true"
-              title="ファイルエクスプローラーの表示/非表示 (Cmd+B / Ctrl+B)"
-            >
-              ◧ ファイル
-            </button>
-            <button
-              type="button"
-              id="btn-toggle-preview"
-              class="chip-btn chip-toggle active"
-              aria-pressed="true"
-              title="プレビューの表示/非表示 (Cmd+\ / Ctrl+\)"
-            >
-              👁️ プレビュー
-            </button>
-          </div>
+          <button
+            type="button"
+            id="btn-toggle-preview"
+            class="chip-btn chip-toggle active"
+            aria-pressed="true"
+            title="プレビューの表示/非表示 (Cmd+\ / Ctrl+\)"
+          >
+            👁️ プレビュー
+          </button>
         </div>
       </header>
 
@@ -193,6 +191,20 @@
 
         <!-- Right Pane: Live Preview -->
         <section id="pane-preview" class="preview-pane" aria-label="リアルタイムプレビュー">
+          <div class="preview-header">
+            <span class="preview-header-title">👁️ プレビュー</span>
+            <div class="preview-header-actions">
+              <button
+                type="button"
+                id="btn-close-preview"
+                class="btn btn-icon btn-sm"
+                aria-label="プレビューを隠す"
+                title="プレビューを非表示 (Cmd+\ / Ctrl+\)"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
           <div id="preview-viewport" class="preview-viewport mode-document">
             <article id="preview-content" class="lecture-render-root" data-lecture-theme="handout"></article>
           </div>

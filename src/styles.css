@@ -1882,3 +1882,28 @@ dialog::backdrop {
   outline: 2px solid var(--brand);
   outline-offset: 1px;
 }
+
+/* Preview Pane Compact Header (Symmetric with Sidebar Header & Editor Tab Bar) */
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 35px;
+  padding: 0 10px 0 12px;
+  background-color: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.preview-header-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.preview-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
