@@ -197,6 +197,16 @@ body {
   transform: translateY(1px);
 }
 
+.btn[hidden] {
+  display: none !important;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-primary {
   background-color: var(--brand);
   color: var(--brand-text);

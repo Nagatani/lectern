@@ -2481,6 +2481,7 @@ async function setupUnsavedCloseGuard(): Promise<void> {
 
 async function checkForUpdatesFlow(manual: boolean): Promise<void> {
   if (manual) {
+    pendingUpdate = null;
     elUpdaterTitle.textContent = "🔄 アップデートの確認";
     elUpdaterMessage.textContent =
       "GitHub Releases (Nagatani/lectern) の最新バージョンを確認しています...";
@@ -2488,7 +2489,7 @@ async function checkForUpdatesFlow(manual: boolean): Promise<void> {
     elUpdaterNotes.textContent = "";
     elUpdaterProgressWrap.hidden = true;
     btnUpdaterInstall.hidden = true;
-    btnUpdaterInstall.disabled = false;
+    btnUpdaterInstall.disabled = true;
     btnUpdaterClose.textContent = "閉じる";
     modalUpdater.returnValue = "";
     modalUpdater.showModal();
@@ -2516,21 +2517,27 @@ async function checkForUpdatesFlow(manual: boolean): Promise<void> {
         modalUpdater.returnValue = "";
         modalUpdater.showModal();
       }
-    } else if (manual) {
-      elUpdaterTitle.textContent = "✅ 最新バージョンです";
-      elUpdaterMessage.textContent = "現在お使いの Lectern は最新バージョンです。";
+    } else {
+      pendingUpdate = null;
       btnUpdaterInstall.hidden = true;
-      btnUpdaterClose.textContent = "閉じる";
-      setStatus("アップデート確認完了: 最新バージョンです");
+      btnUpdaterInstall.disabled = true;
+      if (manual) {
+        elUpdaterTitle.textContent = "✅ 最新バージョンです";
+        elUpdaterMessage.textContent = "現在お使いの Lectern は最新バージョンです。";
+        btnUpdaterClose.textContent = "閉じる";
+        setStatus("アップデート確認完了: 最新バージョンです");
+      }
     }
   } catch (err) {
+    pendingUpdate = null;
+    btnUpdaterInstall.hidden = true;
+    btnUpdaterInstall.disabled = true;
     const errText = String(err);
     setStatus(`アップデート確認スキップ / エラー: ${errText}`);
     if (manual) {
       elUpdaterTitle.textContent = "⚠️ アップデートを確認できませんでした";
       elUpdaterMessage.textContent =
         `GitHub Releases からの確認に失敗しました。オフライン環境、または署名公開鍵 (pubkey) / latest.json が未設定の可能性があります。\n詳細: ${errText}`;
-      btnUpdaterInstall.hidden = true;
       btnUpdaterClose.textContent = "閉じる";
     }
   }
