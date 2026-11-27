@@ -1,6 +1,6 @@
 [package]
 name = "lectern"
-version = "0.4.4"
+version = "0.5.0"
 description = "Lectern — Rust & Tauri Lecture Markdown Editor and HTML/PDF Converter"
 authors = ["Lectern Contributors"]
 edition = "2021"
