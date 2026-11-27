@@ -692,9 +692,6 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
     let del_line = MenuItemBuilder::with_id("edit:delete-line", "行を削除")
         .accelerator("CmdOrCtrl+Shift+K")
         .build(app)?;
-    let insert_image = MenuItemBuilder::with_id("edit:insert-image", "画像を挿入...")
-        .accelerator("CmdOrCtrl+Shift+I")
-        .build(app)?;
     let edit_submenu = SubmenuBuilder::new(app, "編集")
         .undo()
         .redo()
@@ -711,8 +708,37 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
         .separator()
         .item(&dup_line)
         .item(&del_line)
+        .build()?;
+
+    // 3.5. 挿入 メニュー（クイック挿入バーから移動・アイコンなし）
+    let insert_slide_break =
+        MenuItemBuilder::with_id("insert:slide-break", "スライド区切り (---)").build(app)?;
+    let insert_math_block =
+        MenuItemBuilder::with_id("insert:math-block", "数式ブロック ($$ ... $$)").build(app)?;
+    let insert_math_inline =
+        MenuItemBuilder::with_id("insert:math-inline", "インライン数式 ($ ... $)").build(app)?;
+    let insert_code_block =
+        MenuItemBuilder::with_id("insert:code-rust", "コードブロック").build(app)?;
+    let insert_mermaid = MenuItemBuilder::with_id("insert:mermaid", "Mermaid図表").build(app)?;
+    let insert_image = MenuItemBuilder::with_id("edit:insert-image", "画像を挿入...")
+        .accelerator("CmdOrCtrl+Shift+I")
+        .build(app)?;
+    let insert_callout =
+        MenuItemBuilder::with_id("insert:callout", "ポイント / 演習枠").build(app)?;
+    let insert_two_column =
+        MenuItemBuilder::with_id("insert:two-column", "2カラムレイアウト").build(app)?;
+    let insert_submenu = SubmenuBuilder::new(app, "挿入")
+        .item(&insert_slide_break)
         .separator()
+        .item(&insert_math_block)
+        .item(&insert_math_inline)
+        .separator()
+        .item(&insert_code_block)
+        .item(&insert_mermaid)
         .item(&insert_image)
+        .separator()
+        .item(&insert_callout)
+        .item(&insert_two_column)
         .build()?;
 
     // 4. 表示 メニュー
@@ -797,6 +823,7 @@ fn build_app_menu(app: &AppHandle, recent_paths: &[String]) -> tauri::Result<Men
 
     root.item(&file_submenu)
         .item(&edit_submenu)
+        .item(&insert_submenu)
         .item(&view_submenu)
         .item(&help_submenu)
         .build()

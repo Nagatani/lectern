@@ -118,8 +118,8 @@ const elPreviewContent = document.getElementById("preview-content") as HTMLEleme
 const elCompileTime = document.getElementById("compile-time") as HTMLSpanElement;
 const elFileTree = document.getElementById("file-tree") as HTMLUListElement;
 const elWorkspacePathLabel = document.getElementById("workspace-path-label") as HTMLDivElement;
-const elCurrentFileIndicator = document.getElementById("current-file-indicator") as HTMLSpanElement;
-const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLButtonElement;
+const elCurrentFileIndicator = document.getElementById("current-file-indicator") as HTMLSpanElement | null;
+const elSaveStatusBadge = document.getElementById("save-status-badge") as HTMLButtonElement | null;
 const elActiveThemeIndicator = document.getElementById("active-theme-indicator") as HTMLElement;
 const elPreviewThemeStyle = document.getElementById("preview-theme-style") as HTMLStyleElement;
 
@@ -478,7 +478,7 @@ function renderThemeSelector(): void {
   for (const t of state.themes) {
     const opt = document.createElement("option");
     opt.value = t.id;
-    opt.textContent = t.is_builtin ? `🎨 ${t.name}` : `✨ ${t.name}`;
+    opt.textContent = t.is_builtin ? t.name : `${t.name} (カスタム)`;
     if (t.id === state.currentThemeId) {
       opt.selected = true;
     }
@@ -766,14 +766,18 @@ function markDirty(dirty: boolean): void {
   state.isDirty = dirty;
   if (dirty) {
     editorTabBar?.updateActiveSnapshot({ content: elEditor.value });
-    elSaveStatusBadge.textContent = "Modified";
-    elSaveStatusBadge.className = "status-badge dirty";
-    elSaveStatusBadge.title = "未保存の変更があります（クリックで保存 Cmd+S / Ctrl+S）";
+    if (elSaveStatusBadge) {
+      elSaveStatusBadge.textContent = "Modified";
+      elSaveStatusBadge.className = "status-badge dirty";
+      elSaveStatusBadge.title = "未保存の変更があります（クリックで保存 Cmd+S / Ctrl+S）";
+    }
     scheduleAutoSave();
   } else {
-    elSaveStatusBadge.textContent = "Saved";
-    elSaveStatusBadge.className = "status-badge saved";
-    elSaveStatusBadge.title = "保存済み（クリックで上書き保存 Cmd+S / Ctrl+S）";
+    if (elSaveStatusBadge) {
+      elSaveStatusBadge.textContent = "Saved";
+      elSaveStatusBadge.className = "status-badge saved";
+      elSaveStatusBadge.title = "保存済み（クリックで上書き保存 Cmd+S / Ctrl+S）";
+    }
     clearAutoSaveTimer();
   }
   editorTabBar?.setTabDirty(dirty);
@@ -982,7 +986,7 @@ function clearCurrentOpenFile(): void {
   state.currentFilePath = "";
   state.currentFileName = "";
   elEditor.value = "";
-  elCurrentFileIndicator.textContent = "未選択";
+  if (elCurrentFileIndicator) elCurrentFileIndicator.textContent = "未選択";
   markDirty(false);
   updateLineNumbersAndStats();
   elPreviewContent.innerHTML = "";
@@ -1057,7 +1061,7 @@ async function applyActiveTab(tab: EditorTabDocument | null): Promise<void> {
   state.currentSlideIndex = tab.slideIndex;
 
   elEditor.value = tab.content;
-  elCurrentFileIndicator.textContent = tab.fileName;
+  if (elCurrentFileIndicator) elCurrentFileIndicator.textContent = tab.fileName;
   markDirty(tab.isDirty);
   updateLineNumbersAndStats();
 
@@ -1177,7 +1181,7 @@ function setupFileExplorer(): FileExplorerController {
         if (active) {
           state.currentFilePath = active.filePath;
           state.currentFileName = active.fileName;
-          elCurrentFileIndicator.textContent = active.fileName;
+          if (elCurrentFileIndicator) elCurrentFileIndicator.textContent = active.fileName;
         }
         return;
       }
@@ -1187,7 +1191,7 @@ function setupFileExplorer(): FileExplorerController {
       if (curNorm === oldNorm) {
         state.currentFilePath = newPath;
         state.currentFileName = basenameFromPath(newPath);
-        elCurrentFileIndicator.textContent = state.currentFileName;
+        if (elCurrentFileIndicator) elCurrentFileIndicator.textContent = state.currentFileName;
       } else if (isDir && curNorm.startsWith(oldNorm + "/")) {
         const suffix = state.currentFilePath.slice(oldPath.length);
         state.currentFilePath = newPath + suffix;
@@ -1312,7 +1316,7 @@ async function openFile(filePath: string, displayName: string): Promise<void> {
     state.currentSlideIndex = 0;
 
     elEditor.value = content;
-    elCurrentFileIndicator.textContent = displayName;
+    if (elCurrentFileIndicator) elCurrentFileIndicator.textContent = displayName;
     markDirty(false);
     updateLineNumbersAndStats();
 
@@ -1781,7 +1785,7 @@ function bindEvents(): void {
     settingsController?.openModal();
   });
 
-  elSaveStatusBadge.addEventListener("click", () => {
+  elSaveStatusBadge?.addEventListener("click", () => {
     void saveCurrentFile();
   });
   elEditorCursorPos.addEventListener("click", () => {
@@ -1815,7 +1819,7 @@ function updateScrollSyncToggleUI(enabled: boolean): void {
   if (!btnToggleScrollSync) return;
   btnToggleScrollSync.classList.toggle("active", enabled);
   btnToggleScrollSync.setAttribute("aria-pressed", String(enabled));
-  btnToggleScrollSync.textContent = enabled ? "🔗 追従同期: ON" : "🔗 追従同期: OFF";
+  btnToggleScrollSync.textContent = enabled ? "追従同期: ON" : "追従同期: OFF";
   btnToggleScrollSync.title = enabled
     ? "プレビューのスクロール追従: ON（クリックでOFF）"
     : "プレビューのスクロール追従: OFF（クリックでON）";
@@ -2342,6 +2346,15 @@ async function setupNativeMenuListener(): Promise<void> {
           break;
         case "edit:insert-image":
           void insertImageFlow();
+          break;
+        case "insert:slide-break":
+        case "insert:math-block":
+        case "insert:math-inline":
+        case "insert:code-rust":
+        case "insert:mermaid":
+        case "insert:callout":
+        case "insert:two-column":
+          insertSnippetAtCursor(action.slice("insert:".length));
           break;
         case "view:mode-document":
           setRenderMode("document");
