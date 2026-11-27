@@ -133,7 +133,14 @@ pub fn compile_lecture_markdown_with_options(
     let preprocessed = preprocess_pagebreaks(&preprocess_callouts(&body_md));
 
     let raw_slides = split_slides(&preprocessed);
-    let slide_count = raw_slides.len().max(1);
+    let title_header_html = build_doc_header_html(&meta);
+    let has_title_slide = mode == "slide" && !title_header_html.is_empty();
+    let body_slides: Vec<String> = if has_title_slide && preprocessed.trim().is_empty() {
+        Vec::new()
+    } else {
+        raw_slides
+    };
+    let slide_count = ((if has_title_slide { 1 } else { 0 }) + body_slides.len()).max(1);
 
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
@@ -154,21 +161,29 @@ pub fn compile_lecture_markdown_with_options(
     let mut final_html = String::new();
 
     if mode == "slide" {
-        for (idx, slide_md) in raw_slides.iter().enumerate() {
+        let footer_label = match (meta.course.is_empty(), meta.title.is_empty()) {
+            (false, false) => format!("{} — {}", meta.course, meta.title),
+            (false, true) => meta.course.clone(),
+            (true, false) => meta.title.clone(),
+            (true, true) => "Lectern".to_string(),
+        };
+        let escaped_footer_label = escape_html(&footer_label);
+
+        if has_title_slide {
+            final_html.push_str(&format!(
+                r#"<section class="lecture-slide lecture-title-slide" data-slide-index="0" aria-roledescription="スライド" aria-label="スライド 1 / {}">{}<footer class="slide-footer"><span>{}</span><span>1 / {}</span></footer></section>"#,
+                slide_count,
+                title_header_html,
+                escaped_footer_label,
+                slide_count
+            ));
+        }
+
+        let offset = if has_title_slide { 1 } else { 0 };
+        for (body_idx, slide_md) in body_slides.iter().enumerate() {
+            let idx = body_idx + offset;
             let (clean_slide_md, speaker_note) = extract_speaker_notes(slide_md);
             let slide_inner = render_markdown_chunk(&clean_slide_md, &ss, theme, base_dir);
-            let title_header = if idx == 0 {
-                build_doc_header_html(&meta)
-            } else {
-                String::new()
-            };
-
-            let footer_label = match (meta.course.is_empty(), meta.title.is_empty()) {
-                (false, false) => format!("{} — {}", meta.course, meta.title),
-                (false, true) => meta.course.clone(),
-                (true, false) => meta.title.clone(),
-                (true, true) => "Lectern".to_string(),
-            };
 
             let note_attr = if speaker_note.is_empty() {
                 String::new()
@@ -177,21 +192,20 @@ pub fn compile_lecture_markdown_with_options(
             };
 
             final_html.push_str(&format!(
-                r#"<section class="lecture-slide" data-slide-index="{}" aria-roledescription="スライド" aria-label="スライド {} / {}"{}>{}{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
+                r#"<section class="lecture-slide" data-slide-index="{}" aria-roledescription="スライド" aria-label="スライド {} / {}"{}>{}<footer class="slide-footer"><span>{}</span><span>{} / {}</span></footer></section>"#,
                 idx,
                 idx + 1,
                 slide_count,
                 note_attr,
-                title_header,
                 slide_inner,
-                escape_html(&footer_label),
+                escaped_footer_label,
                 idx + 1,
                 slide_count
             ));
         }
     } else {
         // Document (A4 Handout) Mode
-        final_html.push_str(&build_doc_header_html(&meta));
+        final_html.push_str(&title_header_html);
         let doc_inner = render_markdown_chunk(&preprocessed, &ss, theme, base_dir);
         final_html.push_str(&doc_inner);
     }
@@ -1994,6 +2008,11 @@ pub fn build_standalone_html_with_base_dir(
       font-size: 12px;
       color: #64748b;
     }}
+    .lecture-slide.lecture-title-slide .lecture-doc-header {{
+      margin: auto 0 !important;
+      padding-bottom: 0;
+      border-bottom: none !important;
+    }}
     .lecture-page-break {{
       position: relative;
       display: flex;
@@ -3772,20 +3791,29 @@ title: スピーカーノートテスト
 "#;
 
         let compiled = compile_lecture_markdown(md, "slide");
-        assert_eq!(compiled.slide_count, 2);
+        // Frontmatter 表紙スライド (1ページ目) + 本文2スライド = 3スライド
+        assert_eq!(compiled.slide_count, 3);
+        assert!(compiled.html.contains(
+            r#"<section class="lecture-slide lecture-title-slide" data-slide-index="0" aria-roledescription="スライド" aria-label="スライド 1 / 3"><header class="lecture-doc-header">"#
+        ));
         assert!(
             compiled.html.contains(
-                r#"data-slide-index="0" aria-roledescription="スライド" aria-label="スライド 1 / 2" data-speaker-note="重要ポイント: &quot;A &lt; B &amp; C&quot; を口頭補足""#
+                r#"data-slide-index="1" aria-roledescription="スライド" aria-label="スライド 2 / 3" data-speaker-note="重要ポイント: &quot;A &lt; B &amp; C&quot; を口頭補足""#
             ),
             "html={}",
             compiled.html
         );
         // ノート本文がスライドの可視要素として出力されていないこと
         assert!(!compiled.html.contains("<p>重要ポイント:"));
-        // 2枚目はノートなしのため data-speaker-note 属性を付けない
+        // 3枚目（本文2スライド目）はノートなしのため data-speaker-note 属性を付けない
         assert!(compiled
             .html
-            .contains(r#"data-slide-index="1" aria-roledescription="スライド" aria-label="スライド 2 / 2">"#));
+            .contains(r#"data-slide-index="2" aria-roledescription="スライド" aria-label="スライド 3 / 3">"#));
+
+        // Frontmatter なしの Markdown では表紙スライドを追加しない
+        let no_fm = compile_lecture_markdown("# 本文1\n---\n# 本文2\n", "slide");
+        assert_eq!(no_fm.slide_count, 2);
+        assert!(!no_fm.html.contains("lecture-title-slide"));
     }
 
     #[test]
@@ -4078,7 +4106,8 @@ graph LR
 
         let slide_html = build_standalone_html(md, None, "slide", None, None);
         assert!(slide_html.contains(r#"aria-roledescription="スライド""#));
-        assert!(slide_html.contains(r#"aria-label="スライド 1 / 2""#));
+        assert!(slide_html.contains(r#"aria-label="スライド 1 / 3""#));
+        assert!(slide_html.contains(r#"lecture-title-slide"#));
         assert!(slide_html.contains(r#"id="slide-live-region""#));
         assert!(slide_html.contains(r#"aria-live="polite""#));
     }

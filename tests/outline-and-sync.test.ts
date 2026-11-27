@@ -165,7 +165,7 @@ describe("outline-and-sync: getSlideIndexAtCursor", () => {
     assert.equal(getSlideIndexAtCursor("# Only Slide\nHello", 999), 0);
   });
 
-  it("tracks 0-based slide index across YAML frontmatter and standalone --- separators", () => {
+  it("tracks 0-based slide index with dedicated Frontmatter cover slide (index 0) and body from index 1", () => {
     const md = [
       "---",
       "title: Slide Deck",
@@ -181,17 +181,22 @@ describe("outline-and-sync: getSlideIndexAtCursor", () => {
       "Content 2",
     ].join("\n");
 
-    // Inside frontmatter -> slide 0
+    // Inside frontmatter -> cover slide (index 0)
     assert.equal(getSlideIndexAtCursor(md, md.indexOf("title:")), 0);
-    // On slide 0
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 0")), 0);
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("Content 0")), 0);
-    // On slide 1
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 1")), 1);
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("Content 1")), 1);
-    // On slide 2
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 2")), 2);
-    assert.equal(getSlideIndexAtCursor(md, md.length), 2);
+    // Body slide 1 -> index 1
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 0")), 1);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("Content 0")), 1);
+    // Body slide 2 -> index 2
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 1")), 2);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("Content 1")), 2);
+    // Body slide 3 -> index 3
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# Slide 2")), 3);
+    assert.equal(getSlideIndexAtCursor(md, md.length), 3);
+
+    // Frontmatter without visible header fields (only theme) does NOT add a cover slide
+    const themeOnlyMd = ["---", "theme: handout", "---", "# First", "---", "# Second"].join("\n");
+    assert.equal(getSlideIndexAtCursor(themeOnlyMd, themeOnlyMd.indexOf("# First")), 0);
+    assert.equal(getSlideIndexAtCursor(themeOnlyMd, themeOnlyMd.indexOf("# Second")), 1);
   });
 
   it("ignores --- lines inside backtick and tilde fenced code blocks", () => {
@@ -235,9 +240,10 @@ describe("outline-and-sync: getSlideIndexAtCursor", () => {
 
   it("handles CRLF line endings accurately", () => {
     const md = "---\r\ntitle: T\r\n---\r\n# S0\r\n---\r\n# S1\r\n---\r\n# S2";
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S0")), 0);
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S1")), 1);
-    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S2")), 2);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("title:")), 0);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S0")), 1);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S1")), 2);
+    assert.equal(getSlideIndexAtCursor(md, md.indexOf("# S2")), 3);
   });
 });
 

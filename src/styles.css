@@ -1973,3 +1973,10 @@ dialog::backdrop {
   align-items: center;
   gap: 4px;
 }
+
+/* Dedicated Frontmatter Cover Slide (Slide 1) */
+.lecture-render-root .lecture-slide.lecture-title-slide .lecture-doc-header {
+  margin: auto 0 !important;
+  padding-bottom: 0;
+  border-bottom: none !important;
+}

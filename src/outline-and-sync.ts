@@ -282,10 +282,41 @@ export function filterHeadings(headings: HeadingItem[], query: string): HeadingI
   });
 }
 
+const FRONTMATTER_HEADER_KEYS = new Set([
+  "course",
+  "lecture",
+  "subject",
+  "title",
+  "subtitle",
+  "description",
+  "summary",
+  "abstract",
+  "author",
+  "date",
+]);
+
+/**
+ * Returns true when the leading YAML frontmatter contains at least one visible
+ * cover-slide field (matching `build_doc_header_html` in `converter.rs`).
+ */
+function frontmatterHasVisibleHeader(lines: Array<{ text: string }>, fmEnd: number): boolean {
+  if (fmEnd <= 0) return false;
+  for (let i = 1; i < fmEnd; i += 1) {
+    const colonIdx = lines[i].text.indexOf(":");
+    if (colonIdx < 0) continue;
+    const key = lines[i].text.slice(0, colonIdx).trim().toLowerCase();
+    const val = lines[i].text.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, "");
+    if (FRONTMATTER_HEADER_KEYS.has(key) && val.length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Computes the 0-based slide index at `cursorOffset`, skipping leading YAML
  * frontmatter and fenced code blocks, and splitting on standalone `---` lines
- * (matching `split_slides` in `src-tauri/src/converter.rs`).
+ * (matching `split_slides` and cover-slide generation in `src-tauri/src/converter.rs`).
  */
 export function getSlideIndexAtCursor(markdown: string, cursorOffset: number): number {
   if (!markdown) return 0;
@@ -298,10 +329,12 @@ export function getSlideIndexAtCursor(markdown: string, cursorOffset: number): n
     return 0;
   }
 
+  const hasCoverSlide = fmEnd >= 0 && frontmatterHasVisibleHeader(lines, fmEnd);
+  const baseOffset = hasCoverSlide ? 1 : 0;
   const startIdx = fmEnd >= 0 ? fmEnd + 1 : 0;
   const fence = new FenceTracker();
 
-  let currentSlideIndex = 0;
+  let currentSlideIndex = baseOffset;
   let currentHasContent = false;
   let cursorSlideIndex: number | null = null;
 
@@ -328,8 +361,11 @@ export function getSlideIndexAtCursor(markdown: string, cursorOffset: number): n
     }
   }
 
-  const totalSlides =
-    currentHasContent || currentSlideIndex === 0 ? currentSlideIndex + 1 : currentSlideIndex;
+  const bodySlides =
+    currentHasContent || currentSlideIndex === baseOffset
+      ? currentSlideIndex - baseOffset + 1
+      : currentSlideIndex - baseOffset;
+  const totalSlides = Math.max(1, baseOffset + bodySlides);
   const resolved = cursorSlideIndex ?? currentSlideIndex;
   return Math.max(0, Math.min(resolved, totalSlides - 1));
 }
