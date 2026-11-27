@@ -36,6 +36,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js (for KaTeX CSS/woff2 fonts inlined by build.rs)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install frontend dependencies (KaTeX assets)
+        run: npm ci
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
